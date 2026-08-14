@@ -1,17 +1,17 @@
-from fastapi import FastAPI, Query, Request, HTTPException
-import re
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-import html
 import hashlib
+import hmac
+import html
+import os
+import secrets
 import threading
 import time
+from typing import List, Tuple
+
 try:
     import nltk
     from nltk.stem import WordNetLemmatizer
     lemmatizer = WordNetLemmatizer()
-    # ensure wordnet data is available; download if missing
+    # ensure wordnote data is available; download if missing
     try:
         lemmatizer.lemmatize('test')
     except LookupError:
@@ -20,9 +20,15 @@ try:
 except Exception:
     # fallback simple identity function
     lemmatizer = None
+
+from fastapi import FastAPI, Form, Query, Request, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+import re
 import sqlite3
-import os
-from typing import List, Tuple
+
 from ranking import rank_recipes
 from indexer import _image_path_to_url, build_index
 
@@ -32,6 +38,92 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), 't
 static_dir = os.path.join(os.path.dirname(__file__), 'static')
 if os.path.isdir(static_dir):
     app.mount('/static', StaticFiles(directory=static_dir), name='static')
+
+# Simple password protection --------------------------------------------------
+# The password can be set via the COOKSTER_PASSWORD environment variable.
+# If not set, a default is used. In production you should always use the env var.
+_COOKSTER_PASSWORD = os.environ.get('COOKSTER_PASSWORD') or 'C))kstERn@p5t3r'
+_PASSWORD_HASH = hashlib.sha256(_COOKSTER_PASSWORD.encode('utf-8')).hexdigest()
+_SECRET_KEY = os.environ.get('COOKSTER_SECRET') or secrets.token_hex(32)
+_SESSION_COOKIE = 'cookster_session'
+_SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+_session_serializer = URLSafeTimedSerializer(_SECRET_KEY, salt='cookster-auth')
+
+
+def _verify_password(password: str) -> bool:
+    """Constant-time password comparison."""
+    provided = hashlib.sha256(password.encode('utf-8')).hexdigest()
+    return hmac.compare_digest(provided, _PASSWORD_HASH)
+
+
+def _set_session(response: RedirectResponse) -> None:
+    token = _session_serializer.dumps({'auth': True})
+    response.set_cookie(
+        _SESSION_COOKIE,
+        token,
+        max_age=_SESSION_MAX_AGE,
+        httponly=True,
+        samesite='lax',
+        secure=False,  # set to True if serving over HTTPS
+    )
+
+
+def _clear_session(response: RedirectResponse) -> None:
+    response.delete_cookie(_SESSION_COOKIE)
+
+
+def _is_authenticated(request: Request) -> bool:
+    token = request.cookies.get(_SESSION_COOKIE)
+    if not token:
+        return False
+    try:
+        data = _session_serializer.loads(token, max_age=_SESSION_MAX_AGE)
+        return bool(data.get('auth'))
+    except (BadSignature, SignatureExpired):
+        return False
+
+
+@app.middleware('http')
+async def auth_middleware(request: Request, call_next):
+    """Redirect unauthenticated users to /login except for public paths."""
+    public_paths = {'/login', '/logout', '/favicon.ico'}
+    path = request.url.path
+
+    # Static files and login/logout are always public.
+    if path.startswith('/static/') or path in public_paths:
+        return await call_next(request)
+
+    if _is_authenticated(request):
+        return await call_next(request)
+
+    # API routes return 401; HTML routes redirect to login.
+    if path.startswith('/api/'):
+        return JSONResponse({'error': 'Authentication required'}, status_code=401)
+
+    return RedirectResponse(url='/login', status_code=302)
+
+
+@app.get('/login', response_class=HTMLResponse)
+def login_page(request: Request, error: str = Query('')):
+    tmpl = templates.env.get_template('login.html')
+    content = tmpl.render(request=request, error=error)
+    return HTMLResponse(content)
+
+
+@app.post('/login')
+def login(request: Request, password: str = Form('')):
+    if _verify_password(password):
+        response = RedirectResponse(url='/', status_code=302)
+        _set_session(response)
+        return response
+    return RedirectResponse(url='/login?error=1', status_code=302)
+
+
+@app.get('/logout')
+def logout():
+    response = RedirectResponse(url='/login', status_code=302)
+    _clear_session(response)
+    return response
 
 
 # Directories that file paths must stay within.

@@ -10,6 +10,20 @@
   </head>
   <body>
     <div class="container recipe-container">
+      <header class="top" style="margin-bottom:8px">
+        <a class="brand" href="/">
+          <img src="/static/cookster-logo.jpg" alt="Cookster" class="logo-img">
+          <div>
+            <h1>Cook<span>ster</span></h1>
+            <p>Recipe view</p>
+          </div>
+        </a>
+        <div class="header-actions">
+          <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
+          <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
+        </div>
+      </header>
+
       <a id="back-link" class="back-link" href="/">← Back to search</a>
 
       {% if error %}

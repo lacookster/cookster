@@ -1,5 +1,12 @@
+import pytest
 from fastapi.testclient import TestClient
+import api
 from api import app
+
+
+@pytest.fixture(autouse=True)
+def bypass_auth(monkeypatch):
+    monkeypatch.setattr(api, '_is_authenticated', lambda request: True)
 
 
 def test_index_contains_static_links():

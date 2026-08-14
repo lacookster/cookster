@@ -1,9 +1,16 @@
 import sqlite3
 import tempfile
 import os
+import pytest
 from fastapi.testclient import TestClient
 import api
 from api import app, _clean_source
+
+
+@pytest.fixture(autouse=True)
+def bypass_auth(monkeypatch):
+    """Existing endpoint tests run as an authenticated user."""
+    monkeypatch.setattr(api, '_is_authenticated', lambda request: True)
 
 
 def _set_db_dir(path):

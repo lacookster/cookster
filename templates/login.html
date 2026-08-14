@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Login | Cookster</title>
+    <link rel="icon" type="image/jpeg" href="/static/cookster-logo.jpg">
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .login-wrap {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      .login-card {
+        width: 100%;
+        max-width: 380px;
+        text-align: center;
+      }
+      .login-card .brand {
+        justify-content: center;
+        margin-bottom: 28px;
+      }
+      .login-card .logo-img {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        box-shadow: var(--shadow);
+      }
+      .login-card h1 {
+        font-size: 2rem;
+        margin: 0;
+      }
+      .login-card p {
+        color: var(--text-secondary);
+        margin: 6px 0 0;
+      }
+      .login-form {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        margin-top: 10px;
+      }
+      .login-form input[type="password"] {
+        width: 100%;
+        padding: 14px 16px;
+        font-size: 1rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--surface);
+        color: var(--text);
+      }
+      .login-form input[type="password"]:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+      .login-form button {
+        width: 100%;
+        justify-content: center;
+      }
+      .login-error {
+        color: var(--accent);
+        font-size: 0.95rem;
+        margin-top: -6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      <div class="login-card panel">
+        <a class="brand" href="/">
+          <img src="/static/cookster-logo.jpg" alt="Cookster" class="logo-img">
+          <div>
+            <h1>Cook<span>ster</span></h1>
+            <p>Search your cookbooks</p>
+          </div>
+        </a>
+
+        <form class="login-form" method="post" action="/login">
+          <input type="password" name="password" placeholder="Enter password" autofocus required>
+          <button type="submit" class="btn">Unlock</button>
+          {% if error %}
+            <div class="login-error">Incorrect password. Please try again.</div>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </body>
+</html>
