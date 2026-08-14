@@ -360,6 +360,42 @@ Tests create temp DBs and monkeypatch `api.DB_DIR`/`api.BOOKS_DIR` so they don't
 - CSS uses CSS variables for theming; both light and dark modes must be considered.
 - Don't commit generated files (`cookster.db`, `data/recipes/`, `static/epub_images/`, `__pycache__`, etc.). They are in `.gitignore`.
 
+## Image compression and batch push
+
+Because `static/epub_images/` can grow very large, it is listed in `.gitignore` by default. If you need to commit the images to GitHub, compress them first and push in batches to stay under GitHub's ~2 GB pack-size limit.
+
+### Scripts
+
+- `scripts/compress_epub_images.py`: compresses every image in `static/epub_images/` in-place.
+  - JPEGs are saved at quality 75 with progressive encoding.
+  - PNGs are optimized; images with a small colour set are quantized to 256 colours.
+  - GIFs are reduced to a 128-colour palette.
+  - Original filenames and formats are preserved so existing DB `image` URLs remain valid.
+
+- `scripts/push_epub_images_batches.py`: adds the directories under `static/epub_images/` to git in ~250 MB batches, commits each batch, and pushes it to `origin/master`. It uses `git add -f` because the folder is ignored.
+
+### Procedure used for the 2025-08-14 upload
+
+```bash
+# 1. Restore images if they are not in the working tree
+# (they existed in commit 9635d45 before static/epub_images was ignored)
+git checkout 9635d45 -- static/epub_images
+
+# 2. Compress
+python scripts/compress_epub_images.py
+
+# 3. Push in batches
+python scripts/push_epub_images_batches.py
+```
+
+Results of that run:
+
+- 9,326 images
+- Original size: 2.93 GB
+- Compressed size: 1.33 GB
+- Space saved: 54.5%
+- Pushed in 7 batches (41 book directories), each under 250 MB.
+
 ## Troubleshooting
 
 - **Search returns 0 results unexpectedly**: Check whether the DB has the `recipes_fts` table. Without it, the fallback requires query tokens to actually appear in the recipe text.
