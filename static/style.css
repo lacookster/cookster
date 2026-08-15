@@ -523,6 +523,18 @@ header.top {
 .empty h2 { margin: 0 0 8px; color: var(--text); }
 
 /* Books browse page */
+.section-title {
+  margin: 0 0 6px;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.section-subtitle {
+  margin: 0 0 18px;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
 .books-grid {
   display: grid;
   grid-template-columns: 1fr;

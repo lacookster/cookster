@@ -38,6 +38,36 @@
           <p class="hero-subtitle">{{ books|length }} indexed book{{ 's' if books|length != 1 else '' }}</p>
         </div>
 
+        {% if new_books %}
+          <section class="new-books-section" style="margin-bottom:32px">
+            <h2 class="section-title">🆕 New books</h2>
+            <p class="section-subtitle">Recently added to Cookster</p>
+            <div class="books-grid">
+              {% for book in new_books %}
+                <a class="card book-card" href="/book?source={{ book.raw | urlencode }}&db={{ db | urlencode }}">
+                  <div class="card-media">
+                    {% if book.image_url %}
+                      <img src="{{ book.image_url }}" alt="" loading="lazy">
+                    {% else %}
+                      <div class="placeholder">📚</div>
+                    {% endif %}
+                  </div>
+                  <div class="card-body">
+                    <div class="card-title-row">
+                      <h3>{{ book.clean }}</h3>
+                    </div>
+                    <div class="card-meta">
+                      <span>{{ book.count }} recipe{{ 's' if book.count != 1 else '' }}</span>
+                    </div>
+                  </div>
+                </a>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+
+        <h2 class="section-title">All books</h2>
+
         <div class="books-grid">
           {% for book in books %}
             <a class="card book-card" href="/book?source={{ book.raw | urlencode }}&db={{ db | urlencode }}">

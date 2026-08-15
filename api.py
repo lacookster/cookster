@@ -31,7 +31,7 @@ import re
 import sqlite3
 
 from ranking import rank_recipes
-from indexer import _image_path_to_url, build_index
+from indexer import _image_path_to_url, _slug_for_path, build_index
 
 app = FastAPI(title='Cookster API')
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), 'templates'))
@@ -1044,19 +1044,28 @@ def books_list(request: Request, db: str = Query('cookster.db')):
     conn.close()
     books = []
     seen = set()
+    recipes_dir = os.path.join(DB_DIR, 'data', 'recipes')
     for raw, count in rows:
         if not raw or raw in seen:
             continue
         seen.add(raw)
+        json_path = os.path.join(recipes_dir, f"{_slug_for_path(raw)}.json")
+        added_at = os.path.getmtime(json_path) if os.path.exists(json_path) else 0.0
         books.append({
             'raw': raw,
             'clean': _clean_source(raw),
             'count': count,
             'image_url': cover_images.get(raw, ''),
+            'added_at': added_at,
         })
     books.sort(key=lambda x: x['clean'])
+    new_books = sorted(
+        [b for b in books if b['added_at'] > 0],
+        key=lambda x: x['added_at'],
+        reverse=True,
+    )[:12]
     tmpl = templates.env.get_template('books.html')
-    content = tmpl.render(request=request, books=books, db=db)
+    content = tmpl.render(request=request, books=books, new_books=new_books, db=db)
     return HTMLResponse(content)
 
 
