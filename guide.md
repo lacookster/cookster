@@ -155,7 +155,15 @@ Cookster uses two locations under `books/`:
 - **`books/`** – new EPUB/PDF/MOBI cookbooks that have not been indexed yet. Run `run_index.py` to parse them and add their recipes to the database.
 - **`books/added/`** – cookbooks that are already in the database. Keeping them here lets you separate "to index" from "done" while still allowing downloads and full-book views.
 
-The indexer walks `books/` recursively, so `books/added/` is discovered automatically. The API resolves stored `file_path` values against the project root, so it finds books in either location. If you move an already-indexed book into `books/added/`, you do **not** need to rebuild the database.
+The indexer walks `books/` recursively, so `books/added/` is discovered automatically. The API resolves stored `file_path` values against the project root, so it finds books in either location.
+
+**Workflow:**
+
+1. Drop new EPUB/PDF/MOBI files into `books/`.
+2. Run `run_index.py` to parse them and add their recipes to the database.
+3. Move the successfully indexed source files from `books/` into `books/added/`.
+
+You do **not** need to rebuild the database after moving a book into `books/added/`.
 
 ### Security model
 
