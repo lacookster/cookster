@@ -565,6 +565,16 @@ header.top {
   white-space: nowrap;
 }
 
+.new-books-home h2 {
+  margin: 0 0 16px;
+  font-size: 1.35rem;
+  color: var(--text);
+}
+
+.new-books-home .books-grid {
+  margin-bottom: 16px;
+}
+
 .controls {
   display: flex;
   align-items: center;

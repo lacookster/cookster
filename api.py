@@ -1069,6 +1069,51 @@ def books_list(request: Request, db: str = Query('cookster.db')):
     return HTMLResponse(content)
 
 
+@app.get('/api/new-books', response_class=JSONResponse)
+def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int = Query(5, ge=1, le=50)):
+    """Return the most recently indexed cookbooks for the homepage."""
+    try:
+        db_path = resolve_db_path(db)
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
+    if not os.path.exists(db_path):
+        return JSONResponse({'books': []})
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    _ensure_schema(conn)
+    rows = c.execute(
+        'SELECT source, COUNT(*) FROM recipes '
+        'WHERE source IS NOT NULL AND source != "" GROUP BY source'
+    ).fetchall()
+    cover_images: Dict[str, str] = {}
+    try:
+        for raw_source, image in c.execute(
+            "SELECT source, image FROM recipes "
+            "WHERE image IS NOT NULL AND image != '' ORDER BY id"
+        ):
+            if raw_source not in cover_images:
+                cover_images[raw_source] = _image_path_to_url(image)
+    except sqlite3.OperationalError:
+        pass
+    conn.close()
+    recipes_dir = os.path.join(DB_DIR, 'data', 'recipes')
+    books = []
+    for raw, count in rows:
+        if not raw:
+            continue
+        json_path = os.path.join(recipes_dir, f"{_slug_for_path(raw)}.json")
+        added_at = os.path.getmtime(json_path) if os.path.exists(json_path) else 0.0
+        books.append({
+            'source': raw,
+            'title': _clean_source(raw),
+            'count': count,
+            'image_url': cover_images.get(raw, ''),
+            'added_at': added_at,
+        })
+    books.sort(key=lambda x: x['added_at'], reverse=True)
+    return JSONResponse({'books': books[:limit]})
+
+
 @app.get('/book', response_class=HTMLResponse)
 def book_view(request: Request, source: str = Query(...), db: str = Query('cookster.db')):
     """Render a browse-by-book page for a single source."""

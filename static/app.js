@@ -104,6 +104,66 @@
     return text.split('\n').map(l => l.trim()).filter(Boolean)
   }
 
+  function renderNewBookCard(book) {
+    const imageHtml = book.image_url
+      ? `<div class="card-media"><img src="${book.image_url}" alt="" loading="lazy"></div>`
+      : `<div class="card-media"><div class="placeholder">📚</div></div>`
+    return `
+      <a class="card book-card" href="/book?source=${encodeURIComponent(book.source)}">
+        ${imageHtml}
+        <div class="card-body">
+          <div class="card-title-row">
+            <h3>${escapeHtml(book.title)}</h3>
+          </div>
+          <div class="card-meta">
+            <span>${book.count} recipe${book.count === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+      </a>
+    `
+  }
+
+  async function loadNewBooks() {
+    currentView = 'search'
+    activeListId = null
+    page = 1
+    totalResults = 0
+    lastQuery = ''
+    lastSource = ''
+    updatePager()
+    syncUrl(false)
+    countEl.textContent = ''
+    setBusy(true)
+    try {
+      const res = await fetch('/api/new-books?limit=5')
+      if (!res.ok) throw new Error('Failed to load new books')
+      const data = await res.json()
+      const books = data.books || []
+      if (books.length === 0) {
+        resultsEl.innerHTML = `
+          <div class="empty">
+            <h2>Start typing to search</h2>
+            <p>Try an ingredient like "chicken", "chocolate", or "tofu".</p>
+          </div>`
+        return
+      }
+      resultsEl.innerHTML = `
+        <div class="new-books-home">
+          <h2>📚 New cookbooks</h2>
+          <div class="books-grid">${books.map(renderNewBookCard).join('')}</div>
+        </div>`
+    } catch (err) {
+      console.error('[cookster] new books error:', err)
+      resultsEl.innerHTML = `
+        <div class="empty">
+          <h2>Start typing to search</h2>
+          <p>Try an ingredient like "chicken", "chocolate", or "tofu".</p>
+        </div>`
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function renderCard(r) {
     const sid = r.stable_id || String(r.id)
     const isFav = Lists.isFavorite(sid)
@@ -253,20 +313,7 @@
     const source = sourceSelect ? sourceSelect.value : ''
 
     if (!q) {
-      resultsEl.innerHTML = `
-        <div class="empty">
-          <h2>Start typing to search</h2>
-          <p>Try an ingredient like "chicken", "chocolate", or "tofu".</p>
-        </div>`
-      countEl.textContent = ''
-      totalResults = 0
-      page = 1
-      lastQuery = ''
-      lastSource = ''
-      currentView = 'search'
-      activeListId = null
-      updatePager()
-      syncUrl(false)
+      loadNewBooks()
       return
     }
 
@@ -920,6 +967,6 @@
   } else if (lastQuery) {
     doSearch({ pushHistory: false, scroll: false })
   } else {
-    updatePager()
+    loadNewBooks()
   }
 })()
