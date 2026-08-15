@@ -3365,6 +3365,516 @@ def _extract_green_burgers_recipes_with_image(soup: BeautifulSoup, epub_path: st
     return recipes
 
 
+def _extract_appetites_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Anthony Bourdain's 'Appetites: A Cookbook'.
+
+    Uses the book's specific classes: rec_title/rec_titleb for titles,
+    noindenth for serves, hang for ingredients, noindentl1/noindentl for steps.
+    """
+    recipes = []
+    for title_tag in soup.find_all('p', class_=re.compile(r'\b(rec_title|rec_titleb)\b')):
+        title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+        if not title:
+            continue
+
+        serves = ''
+        ingredients = []
+        steps = []
+
+        # The title lives inside <header>; the recipe body follows in the same
+        # <section>. Use find_all_next and stop at the next recipe title.
+        title_classes = re.compile(r'\b(rec_title|rec_titleb)\b')
+        for elem in title_tag.find_all_next():
+            if elem.name == 'p' and elem.get('class') and title_classes.search(' '.join(elem.get('class', []))):
+                break
+            cls = ' '.join(elem.get('class', []))
+            text = _normalize_whitespace(elem.get_text(' ', strip=True))
+            if not text:
+                continue
+
+            if 'noindenth' in cls:
+                serves = text
+            elif 'hang' in cls:
+                if text.endswith(':') or (text.isupper() and len(text) < 60):
+                    ingredients.append('--- ' + text)
+                else:
+                    ingredients.append(text)
+            elif 'noindentl1' in cls or 'noindentl' in cls:
+                steps.append(text)
+            elif 'noindentc' in cls:
+                # Subheadings like 'SPECIAL EQUIPMENT:'
+                ingredients.append('--- ' + text)
+
+        if len(ingredients) >= 2 and len(steps) >= 1:
+            recipes.append({
+                'title': title,
+                'ingredients': '\n'.join(ingredients).strip(),
+                'steps': '\n'.join(steps).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': '',
+                'serves': serves,
+            })
+    return recipes
+
+
+def _extract_appetites_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_appetites_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_australian_food_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Bill Granger's 'Australian Food'.
+
+    Uses classes: recipeTitle for title, serves for yield, ingredients div with
+    ingredient/ingredient-Head/ingredient-top paragraphs, and method paragraphs.
+    """
+    recipes = []
+    for title_tag in soup.find_all('p', class_='recipeTitle'):
+        title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+        if not title:
+            continue
+
+        serves = ''
+        ingredients = []
+        steps = []
+
+        for elem in title_tag.find_next_siblings():
+            if elem.name == 'p' and 'recipeTitle' in elem.get('class', []):
+                break
+            if elem.name == 'p' and 'serves' in elem.get('class', []):
+                serves = _normalize_whitespace(elem.get_text(' ', strip=True))
+                continue
+            if elem.name == 'p' and 'recipeIntro' in ' '.join(elem.get('class', [])):
+                continue
+
+            # Handle siblings that are method paragraphs directly, and walk into
+            # container divs (e.g. <div class="ingredients">) for ingredient lines.
+            if elem.name == 'p' and 'method' in ' '.join(elem.get('class', [])):
+                steps.append(_normalize_whitespace(elem.get_text(' ', strip=True)))
+                continue
+            for p in elem.find_all('p'):
+                cls = ' '.join(p.get('class', []))
+                text = _normalize_whitespace(p.get_text(' ', strip=True))
+                if not text:
+                    continue
+                if 'ingredient' in cls and 'ingredients' not in cls:
+                    if text.isupper() and len(text) < 60:
+                        ingredients.append('--- ' + text)
+                    else:
+                        ingredients.append(text)
+                elif 'method' in cls:
+                    steps.append(text)
+
+        if len(ingredients) >= 2 and len(steps) >= 1:
+            recipes.append({
+                'title': title,
+                'ingredients': '\n'.join(ingredients).strip(),
+                'steps': '\n'.join(steps).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': '',
+                'serves': serves,
+            })
+    return recipes
+
+
+def _extract_australian_food_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_australian_food_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_community_salad_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from 'Community: Salad Recipes from Arthur Street Kitchen'.
+
+    This EPUB is exported as fixed-layout pages with inline-styled spans and no
+    semantic classes. Recipe titles are in the largest font (fs2), serves/subheadings
+    in fs8, ingredient lines in fs3, headnotes in fs9, and method steps in fs0.
+    """
+    recipes = []
+
+    def _spans_with_class(soup, cls_substring: str):
+        return soup.find_all('span', class_=lambda x: x and cls_substring in x)
+
+    title_spans = _spans_with_class(soup, 'fs2')
+    if not title_spans:
+        return recipes
+
+    title = _normalize_whitespace(' '.join(s.get_text(' ', strip=True) for s in title_spans))
+    title = title.strip()
+    if not title or len(title) < 3:
+        return recipes
+
+    # Section dividers also use fs2 but have no ingredient lines (fs3).
+    ingredient_spans = [s for s in _spans_with_class(soup, 'fs3')
+                        if not re.match(r'^\d+$', _normalize_whitespace(s.get_text(' ', strip=True)))]
+    if len(ingredient_spans) < 2:
+        return recipes
+
+    serves = ''
+    ingredients = []
+    steps = []
+
+    for s in _spans_with_class(soup, 'fs8'):
+        text = _normalize_whitespace(s.get_text(' ', strip=True))
+        if not text:
+            continue
+        if _is_serves_line(text):
+            serves = text
+        elif text.isupper() and len(text) < 80:
+            ingredients.append('--- ' + text)
+
+    for s in ingredient_spans:
+        text = _normalize_whitespace(s.get_text(' ', strip=True))
+        if not text or text.endswith(':'):
+            continue
+        # Page number was already filtered out.
+        ingredients.append(text)
+
+    for s in _spans_with_class(soup, 'fs0'):
+        text = _normalize_whitespace(s.get_text(' ', strip=True))
+        if text:
+            steps.append(text)
+
+    if len(ingredients) >= 2 and len(steps) >= 1:
+        recipes.append({
+            'title': title,
+            'ingredients': '\n'.join(ingredients).strip(),
+            'steps': '\n'.join(steps).strip(),
+            'source': os.path.basename(epub_path),
+            'file_path': epub_path,
+            'image': '',
+            'serves': serves,
+        })
+    return recipes
+
+
+def _extract_community_salad_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_community_salad_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_cool_beans_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Joe Yonan's 'Cool Beans'.
+
+    Recipes are embedded in chapter files using InDesign classes:
+    rt/rtno/rstno for titles, ry for yield, ril* for ingredients, rp* for steps,
+    and sbh1/sb for sidebar sub-recipes.
+    """
+    recipes = []
+    cur: Dict = None
+
+    def _new_recipe(title: str) -> Dict:
+        return {
+            'title': title,
+            'serves': '',
+            'ingredients': [],
+            'steps': [],
+            'source': os.path.basename(epub_path),
+            'file_path': epub_path,
+            'image': '',
+        }
+
+    def _finalize():
+        nonlocal cur
+        if cur and len(cur.get('ingredients', [])) >= 2 and len(cur.get('steps', [])) >= 1:
+            recipes.append(cur)
+        cur = None
+
+    title_classes = {'rt', 'rtno'}
+    subtitle_classes = {'rst', 'rstno'}
+
+    for elem in soup.find_all(['p', 'div']):
+        cls = elem.get('class', []) or []
+        cls_set = set(cls)
+        text = _normalize_whitespace(elem.get_text(' ', strip=True))
+        if not text:
+            continue
+
+        # Main recipe title
+        if cls_set & title_classes:
+            _finalize()
+            cur = _new_recipe(text)
+            continue
+
+        # Subtitle appended to current main title if we haven't started collecting.
+        if cls_set & subtitle_classes:
+            if cur and not cur['ingredients'] and not cur['steps']:
+                cur['title'] += ' ' + text
+            continue
+
+        # Sidebar sub-recipe title
+        if 'sbh1' in cls_set:
+            _finalize()
+            cur = _new_recipe(text)
+            continue
+
+        if cur is None:
+            continue
+
+        # Skip headnotes and non-recipe blocks
+        if cls_set & {'rhnf', 'rhn'}:
+            continue
+        if 'ry' in cls_set or 'ry2' in cls_set:
+            cur['serves'] += ' ' + text
+            continue
+        if 'rilh' in cls_set:
+            cur['ingredients'].append('--- ' + text)
+            continue
+        if any(c in cls_set for c in ('rilf', 'ril', 'rill', 'ril_spacebreak')):
+            cur['ingredients'].append(text)
+            continue
+        if any(c in cls_set for c in ('rpf', 'rp', 'rp2')):
+            cur['steps'].append(text)
+            continue
+        if 'sb' in cls_set and cur['steps']:
+            # Sidebar method continuation
+            cur['steps'].append(text)
+            continue
+
+    _finalize()
+    for r in recipes:
+        r['ingredients'] = '\n'.join(r['ingredients']).strip()
+        r['steps'] = '\n'.join(r['steps']).strip()
+        r['serves'] = r['serves'].strip()
+    return recipes
+
+
+def _extract_cool_beans_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_cool_beans_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_jerusalem_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Yotam Ottolenghi's 'Jerusalem'.
+
+    Uses classes: recipe-head for title, hang/hanging* for ingredients,
+    noindent-ts for steps, and noindent2 for headnotes.
+    """
+    recipes = []
+    for title_tag in soup.find_all('p', class_='recipe-head'):
+        title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+        if not title:
+            continue
+
+        serves = ''
+        ingredients = []
+        steps = []
+
+        for sib in title_tag.find_next_siblings():
+            if sib.name == 'p' and 'recipe-head' in sib.get('class', []):
+                break
+            cls = ' '.join(sib.get('class', []))
+            text = _normalize_whitespace(sib.get_text(' ', strip=True))
+            if not text:
+                continue
+
+            if 'hang' in cls:
+                for p in sib.find_all('p'):
+                    p_cls = ' '.join(p.get('class', []))
+                    p_text = _normalize_whitespace(p.get_text(' ', strip=True))
+                    if not p_text:
+                        continue
+                    if _is_serves_line(p_text):
+                        serves = p_text
+                    elif p_text.isupper() and len(p_text) < 80:
+                        ingredients.append('--- ' + p_text)
+                    else:
+                        ingredients.append(p_text)
+                continue
+
+            if 'noindent-ts' in cls:
+                steps.append(text)
+                continue
+
+            # Headnotes/intro text (noindent2) are skipped.
+
+        if len(ingredients) >= 2 and len(steps) >= 1:
+            recipes.append({
+                'title': title,
+                'ingredients': '\n'.join(ingredients).strip(),
+                'steps': '\n'.join(steps).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': '',
+                'serves': serves,
+            })
+    return recipes
+
+
+def _extract_jerusalem_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_jerusalem_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+# Nopalito recipes are spread across split HTML files, so they need book-level
+# streaming extraction. The per-document wrappers below are registered only so
+# the book-level extractor can reuse the same image assignment pipeline.
+
+_NOPALITO_SECTION_HEADINGS = {
+    'IN THE NOPALITO KITCHEN', 'IN YOUR KITCHEN',
+    'BEYOND MASA: MEXICAN PANTRY ESSENTIALS',
+    'MORE WAYS TO USE YOUR MASA',
+    'STORING AND USING YOUR HOMEMADE TORTILLAS',
+}
+
+
+def _extract_nopalito_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Per-document Nopalito extractor (used only as a fallback for single-page recipes)."""
+    recipes = []
+    for title_tag in soup.find_all('p', class_=['rt', 'rt1', 'r1t']):
+        title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+        if not title:
+            continue
+
+        serves = ''
+        ingredients = []
+        steps = []
+
+        for sib in title_tag.find_next_siblings():
+            cls = ' '.join(sib.get('class', []))
+            text = _normalize_whitespace(sib.get_text(' ', strip=True))
+            if not text:
+                continue
+            if 'rh' in cls.split():
+                serves = text
+            elif 'rhn' in cls or 'rhnf' in cls:
+                continue
+            elif 'rilh' in cls:
+                ingredients.append('--- ' + text)
+            elif any(c in cls for c in ('ril', 'rill')):
+                ingredients.append(text)
+            elif any(c in cls for c in ('rpf', 'rp')):
+                steps.append(text)
+
+        if len(ingredients) >= 2 and len(steps) >= 1:
+            recipes.append({
+                'title': title,
+                'ingredients': '\n'.join(ingredients).strip(),
+                'steps': '\n'.join(steps).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': '',
+                'serves': serves,
+            })
+    return recipes
+
+
+def _extract_nopalito_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_nopalito_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_nopalito_from_book(book: epub.EpubBook, epub_path: str, items: List,
+                                saved_images: Dict[str, str], images_dir: str) -> List[Dict]:
+    """Stream all Nopalito HTML docs together, carrying recipe state across splits."""
+    recipes = []
+    cur: Dict = None
+
+    def _finalize_current():
+        nonlocal cur
+        if cur and len(cur.get('ingredients', [])) >= 2 and len(cur.get('steps', [])) >= 1:
+            recipes.append({
+                'title': cur['title'],
+                'ingredients': '\n'.join(cur['ingredients']).strip(),
+                'steps': '\n'.join(cur['steps']).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': cur.get('image', ''),
+                'serves': cur.get('serves', '').strip(),
+            })
+        cur = None
+
+    def _start_recipe(title: str, image_path: str):
+        nonlocal cur
+        cur = {
+            'title': title,
+            'serves': '',
+            'ingredients': [],
+            'steps': [],
+            'image': image_path,
+        }
+
+    for doc_idx, item in enumerate(items):
+        try:
+            if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+        except Exception:
+            continue
+        try:
+            html = item.get_content().decode('utf-8', errors='ignore')
+        except Exception:
+            continue
+        soup = BeautifulSoup(html, 'lxml')
+        doc_name = item.get_name()
+        image_path = _find_image_for_doc(items, doc_idx, soup, doc_name, saved_images, images_dir)
+
+        paragraphs = list(soup.find_all(['p', 'div']))
+
+        # Precompute title-bearing paragraph indices.
+        title_indices = set()
+        for i, p in enumerate(paragraphs):
+            cls_set = set(p.get('class', []))
+            text = _normalize_whitespace(p.get_text(' ', strip=True))
+            if not text:
+                continue
+            if cls_set & {'rt', 'rt1', 'r1t'}:
+                title_indices.add(i)
+                continue
+            if 'h1' in cls_set and text.upper() not in _NOPALITO_SECTION_HEADINGS:
+                # Only treat h1 as a recipe title if recipe markers follow soon.
+                for j in range(i + 1, min(len(paragraphs), i + 5)):
+                    ncls = set(paragraphs[j].get('class', []))
+                    if ncls & {'rh', 'ril', 'rill', 'rpf', 'rp'}:
+                        title_indices.add(i)
+                        break
+
+        for i, p in enumerate(paragraphs):
+            cls_set = set(p.get('class', []))
+            text = _normalize_whitespace(p.get_text(' ', strip=True))
+            if not text:
+                continue
+
+            if i in title_indices:
+                is_sub = bool(cls_set & {'r1t'})
+                _finalize_current()
+                if is_sub and recipes:
+                    # Sub-recipes reuse the parent recipe's image.
+                    _start_recipe(text, recipes[-1].get('image', image_path))
+                else:
+                    _start_recipe(text, image_path)
+                continue
+
+            if cur is None:
+                continue
+
+            if 'rh' in cls_set:
+                cur['serves'] += ' ' + text
+            elif cls_set & {'rhn', 'rhnf'}:
+                continue
+            elif 'rilh' in cls_set:
+                cur['ingredients'].append('--- ' + text)
+            elif any(c in cls_set for c in ('ril', 'rill')):
+                cur['ingredients'].append(text)
+            elif any(c in cls_set for c in ('rpf', 'rp')):
+                cur['steps'].append(text)
+
+    _finalize_current()
+    return recipes
+
+
 # Register extractors in priority order: schema.org first, then known book
 # extractors, then generic paragraph/heading/fallback extractors.
 register_extractor(_schema_org_predicate, _extract_schema_org_recipes, 'schema.org')
@@ -3399,6 +3909,12 @@ register_extractor(_source_predicate('complete plant-based'), _extract_complete_
 register_extractor(_source_predicate('secret to delicious vegan cooking'), _extract_secret_to_delicious_recipes_with_image, 'secret to delicious vegan cooking')
 register_extractor(_source_predicate('vegan richa'), _extract_vegan_richa_recipes_with_image, 'vegan richa')
 register_extractor(_source_predicate('green burgers'), _extract_green_burgers_recipes_with_image, 'green burgers')
+register_extractor(_source_predicate('appetites'), _extract_appetites_recipes_with_image, 'appetites')
+register_extractor(_source_predicate('australian food'), _extract_australian_food_recipes_with_image, 'australian food')
+register_extractor(_source_predicate('community'), _extract_community_salad_recipes_with_image, 'community salad')
+register_extractor(_source_predicate('cool beans'), _extract_cool_beans_recipes_with_image, 'cool beans')
+register_extractor(_source_predicate('nopalito'), _extract_nopalito_recipes_with_image, 'nopalito')
+register_extractor(_source_predicate('jerusalem'), _extract_jerusalem_recipes_with_image, 'jerusalem')
 register_extractor(_always_true_predicate, _extract_paragraph_recipes_with_image, 'paragraph')
 register_extractor(_always_true_predicate, _extract_heading_recipes_with_image, 'heading')
 register_extractor(_always_true_predicate, _extract_fallback_with_image, 'fallback', is_fallback=True)
@@ -3569,15 +4085,43 @@ def _image_path_to_url(path: str) -> str:
     return '/static/' + os.path.basename(norm)
 
 
+_DECORATIVE_IMAGE_BASENAMES = {
+    'vector.png', 'vector.jpg', 'line.png', 'line.jpg',
+    'decoration.png', 'decoration.jpg', 'decor.png', 'decor.jpg',
+    'spacer.png', 'spacer.gif', 'blank.png', 'blank.gif',
+}
+
+
+def _is_decorative_image(img) -> bool:
+    """Return True for images that are clearly decorative spacers/rules."""
+    src = img.get('src') or ''
+    if os.path.basename(src).lower() in _DECORATIVE_IMAGE_BASENAMES:
+        return True
+    width = img.get('width') or ''
+    height = img.get('height') or ''
+    try:
+        w = int(width) if width else None
+        h = int(height) if height else None
+    except ValueError:
+        w = h = None
+    # Very small images are almost always rules/spacers.
+    if (w is not None and w <= 5) or (h is not None and h <= 5):
+        return True
+    return False
+
+
 def _find_image_for_doc(items: List, doc_idx: int, soup: BeautifulSoup, doc_name: str,
                         saved_images: Dict[str, str], images_dir: str) -> str:
     """Find the best image associated with a document.
 
     First search the document itself, then nearby image-only documents in both
     directions (preceding and following) in the EPUB reading order.
+    Decorative images (spacers, vector.png, line.jpg, etc.) are skipped.
     """
     def _first_image(soup, name):
         for img in soup.find_all('img'):
+            if _is_decorative_image(img):
+                continue
             candidate = _resolve_image_path(img.get('src'), name, saved_images, images_dir)
             if candidate:
                 return candidate
@@ -3671,6 +4215,12 @@ def extract_recipes_from_file(file_path: str):
 
     items = list(book.get_items())
     doc_items = [(i, item) for i, item in enumerate(items) if item.get_type() == ebooklib.ITEM_DOCUMENT]
+
+    # Nopalito recipes are split across many small HTML files; process the whole
+    # book as a stream so a title on one page can pair with ingredients/steps on
+    # the next page.
+    if 'nopalito' in file_basename.lower():
+        return _extract_nopalito_from_book(book, file_path, items, saved_images, images_dir)
 
     for idx, item in doc_items:
         try:
