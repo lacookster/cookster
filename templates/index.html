@@ -124,10 +124,41 @@
         <div class="tab-panel" data-tab="backup">
           <section class="list-section">
             <h3>Backup & restore</h3>
-            <p class="empty-lists">Export your favourites, lists, shopping list, meal plan, notes and ratings.</p>
+            <p class="empty-lists">Your data is saved automatically. Use this tab to move it to another device or reset it.</p>
+
+            <div class="backup-row">
+              <div class="backup-field">
+                <label>Recovery code</label>
+                <div class="backup-input-row">
+                  <input id="recovery-code" type="text" readonly value="Loading…" class="backup-code-input" />
+                  <button id="copy-recovery-code" class="btn secondary">Copy</button>
+                </div>
+                <small>Copy this code to access your data on another device.</small>
+              </div>
+            </div>
+
+            <div class="backup-row">
+              <div class="backup-field">
+                <label for="import-recovery-code">Import / link device</label>
+                <div class="backup-input-row">
+                  <input id="import-recovery-code" type="text" placeholder="Paste a recovery code…" class="backup-code-input" />
+                  <button id="import-recovery-btn" class="btn">Import</button>
+                </div>
+                <small>This replaces the data on this browser with the code’s data.</small>
+              </div>
+            </div>
+
+            <div class="backup-row">
+              <div class="backup-field">
+                <label>Sync status</label>
+                <div id="sync-status" class="sync-status">Waiting for first sync…</div>
+              </div>
+            </div>
+
             <div class="backup-actions">
-              <button id="backup-export" class="btn">Export</button>
-              <button id="backup-import" class="btn secondary">Import</button>
+              <button id="backup-export" class="btn secondary">Export JSON</button>
+              <button id="backup-import" class="btn secondary">Import JSON</button>
+              <button id="reset-server-data" class="btn danger">Delete all my server data</button>
             </div>
             <textarea id="backup-area" class="backup-area" placeholder="Paste exported JSON here…"></textarea>
             <div id="backup-status" class="backup-status"></div>

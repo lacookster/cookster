@@ -30,6 +30,7 @@ Thumbs.db
 # Project generated files
 cookster.db-wal
 cookster.db-shm
+cookster_user_data.db
 tmp*.db
 data/recipes/
 static/epub_images/

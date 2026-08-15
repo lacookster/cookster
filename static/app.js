@@ -26,6 +26,12 @@
   const backupImportBtn = document.getElementById('backup-import')
   const backupArea = document.getElementById('backup-area')
   const backupStatus = document.getElementById('backup-status')
+  const recoveryCodeInput = document.getElementById('recovery-code')
+  const copyRecoveryCodeBtn = document.getElementById('copy-recovery-code')
+  const importRecoveryInput = document.getElementById('import-recovery-code')
+  const importRecoveryBtn = document.getElementById('import-recovery-btn')
+  const syncStatusEl = document.getElementById('sync-status')
+  const resetServerDataBtn = document.getElementById('reset-server-data')
 
   const suggestionsEl = document.getElementById('suggestions')
   const randomBtn = document.getElementById('random')
@@ -628,7 +634,33 @@
     })
   }
 
-  // Backup ---------------------------------------------------------------
+  // Backup / server sync UI -----------------------------------------------
+  function setSyncStatus(text, type = 'info') {
+    if (!syncStatusEl) return
+    syncStatusEl.textContent = text
+    syncStatusEl.className = 'sync-status ' + type
+  }
+
+  function loadRecoveryCode() {
+    fetch('/api/user-data/export', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(payload => {
+        if (recoveryCodeInput) recoveryCodeInput.value = payload.token || ''
+        setSyncStatus('Saved to server.')
+      })
+      .catch(() => {
+        setSyncStatus('Unable to reach server.', 'error')
+      })
+  }
+
+  window.addEventListener('cookster-sync-status', (e) => {
+    if (e.detail && e.detail.status === 'saved') {
+      setSyncStatus('Saved to server.')
+    } else if (e.detail && e.detail.status === 'error') {
+      setSyncStatus('Sync failed.', 'error')
+    }
+  })
+
   if (backupExportBtn) {
     backupExportBtn.addEventListener('click', () => {
       const data = Lists.exportAll()
@@ -652,6 +684,66 @@
       }
     })
   }
+
+  if (copyRecoveryCodeBtn) {
+    copyRecoveryCodeBtn.addEventListener('click', () => {
+      recoveryCodeInput.select()
+      navigator.clipboard.writeText(recoveryCodeInput.value).catch(() => {})
+      backupStatus.textContent = 'Recovery code copied.'
+      backupStatus.className = 'backup-status success'
+    })
+  }
+
+  if (importRecoveryBtn) {
+    importRecoveryBtn.addEventListener('click', () => {
+      const token = (importRecoveryInput.value || '').trim()
+      if (!token) {
+        backupStatus.textContent = 'Please paste a recovery code.'
+        backupStatus.className = 'backup-status error'
+        return
+      }
+      backupStatus.textContent = 'Importing…'
+      backupStatus.className = 'backup-status'
+      fetch('/api/user-data/import', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      })
+        .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
+        .then(() => {
+          backupStatus.textContent = 'Device linked. Reloading…'
+          backupStatus.className = 'backup-status success'
+          setTimeout(() => location.reload(), 800)
+        })
+        .catch(err => {
+          backupStatus.textContent = 'Import failed: ' + (err.detail || err.error || 'unknown')
+          backupStatus.className = 'backup-status error'
+        })
+    })
+  }
+
+  if (resetServerDataBtn) {
+    resetServerDataBtn.addEventListener('click', () => {
+      if (!confirm('Permanently delete all your server-side favourites, lists, shopping, meal plan, notes and ratings? This cannot be undone.')) return
+      fetch('/api/user-data/reset', {
+        method: 'POST',
+        credentials: 'same-origin'
+      })
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(() => {
+          backupStatus.textContent = 'Server data deleted. Reloading…'
+          backupStatus.className = 'backup-status success'
+          setTimeout(() => location.reload(), 800)
+        })
+        .catch(() => {
+          backupStatus.textContent = 'Reset failed.'
+          backupStatus.className = 'backup-status error'
+        })
+    })
+  }
+
+  loadRecoveryCode()
 
   // Bind static favourites row once.
   document.querySelector('.favorite-row')?.addEventListener('click', () => {

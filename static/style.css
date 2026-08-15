@@ -1290,6 +1290,49 @@ header.top {
 .backup-status.success { color: #27ae60; }
 .backup-status.error { color: var(--accent); }
 
+.backup-row {
+  margin-bottom: 16px;
+}
+.backup-field label {
+  display: block;
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.backup-field small {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.backup-input-row {
+  display: flex;
+  gap: 8px;
+}
+.backup-code-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+.sync-status {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+.sync-status.success { color: #27ae60; }
+.sync-status.error { color: var(--accent); }
+
+.btn.danger {
+  background: var(--accent);
+  color: #fff;
+}
+.btn.danger:hover { background: var(--accent-hover); }
+
 /* Card action buttons */
 .card-actions-row {
   display: flex;

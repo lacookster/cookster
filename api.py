@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import html
+import json
 import os
 import secrets
 import threading
@@ -21,7 +22,7 @@ except Exception:
     # fallback simple identity function
     lemmatizer = None
 
-from fastapi import FastAPI, Form, Query, Request, HTTPException
+from fastapi import FastAPI, Form, Query, Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -48,6 +49,11 @@ _SECRET_KEY = os.environ.get('COOKSTER_SECRET') or secrets.token_hex(32)
 _SESSION_COOKIE = 'cookster_session'
 _SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 _session_serializer = URLSafeTimedSerializer(_SECRET_KEY, salt='cookster-auth')
+
+# Persistent user-data cookie. This is separate from the auth session and is
+# intentionally NOT cleared on logout so user data survives re-authentication.
+_USER_COOKIE = 'cookster_user'
+_USER_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 10  # 10 years
 
 
 def _verify_password(password: str) -> bool:
@@ -83,6 +89,79 @@ def _is_authenticated(request: Request) -> bool:
         return False
 
 
+def _get_or_create_user_token(request: Request) -> str:
+    """Return the persistent user-data token from the cookie, creating one if absent."""
+    token = request.cookies.get(_USER_COOKIE)
+    if not token:
+        token = secrets.token_urlsafe(32)
+    return token
+
+
+def _set_user_token(response: Response, token: str) -> None:
+    """Set the long-lived user-data cookie."""
+    response.set_cookie(
+        _USER_COOKIE,
+        token,
+        max_age=_USER_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite='lax',
+        path='/',
+        secure=False,  # set to True if serving over HTTPS
+    )
+
+
+def _get_user_db() -> sqlite3.Connection:
+    """Return a connection to the dedicated user-data SQLite database."""
+    conn = sqlite3.connect(_USER_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    _ensure_user_data_schema(conn)
+    return conn
+
+
+def _ensure_user_data_schema(conn: sqlite3.Connection) -> None:
+    """Create the user_data table if it does not exist."""
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS user_data (
+        token TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at REAL NOT NULL
+    )''')
+    conn.commit()
+
+
+def _load_user_data(token: str) -> dict:
+    """Return the stored JSON blob for a user token, or an empty dict."""
+    try:
+        conn = _get_user_db()
+        c = conn.cursor()
+        row = c.execute('SELECT data, updated_at FROM user_data WHERE token = ?', (token,)).fetchone()
+        conn.close()
+        if row:
+            return {'data': json.loads(row['data']), 'updated_at': row['updated_at']}
+    except Exception:
+        pass
+    return {'data': {}, 'updated_at': 0}
+
+
+def _save_user_data(token: str, data: dict) -> None:
+    """Persist a JSON blob for a user token."""
+    conn = _get_user_db()
+    c = conn.cursor()
+    c.execute('INSERT INTO user_data (token, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(token) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
+              (token, json.dumps(data), time.time()))
+    conn.commit()
+    conn.close()
+
+
+def _delete_user_data(token: str) -> None:
+    """Delete all server-side data for a user token."""
+    conn = _get_user_db()
+    c = conn.cursor()
+    c.execute('DELETE FROM user_data WHERE token = ?', (token,))
+    conn.commit()
+    conn.close()
+
+
 @app.middleware('http')
 async def auth_middleware(request: Request, call_next):
     """Redirect unauthenticated users to /login except for public paths."""
@@ -115,6 +194,8 @@ def login(request: Request, password: str = Form('')):
     if _verify_password(password):
         response = RedirectResponse(url='/', status_code=302)
         _set_session(response)
+        token = _get_or_create_user_token(request)
+        _set_user_token(response, token)
         return response
     return RedirectResponse(url='/login?error=1', status_code=302)
 
@@ -123,12 +204,78 @@ def login(request: Request, password: str = Form('')):
 def logout():
     response = RedirectResponse(url='/login', status_code=302)
     _clear_session(response)
+    # NOTE: we deliberately do NOT clear _USER_COOKIE so that logging back in
+    # restores the same favourites/lists/etc.
+    return response
+
+
+@app.get('/api/user-data')
+def get_user_data(request: Request):
+    """Return the current user's persisted data blob."""
+    token = _get_or_create_user_token(request)
+    payload = _load_user_data(token)
+    response = JSONResponse(payload)
+    _set_user_token(response, token)
+    return response
+
+
+@app.post('/api/user-data')
+def save_user_data(request: Request, payload: dict):
+    """Persist the current user's data blob."""
+    token = _get_or_create_user_token(request)
+    data = payload.get('data', {})
+    _save_user_data(token, data)
+    response = JSONResponse({'ok': True})
+    _set_user_token(response, token)
+    return response
+
+
+@app.get('/api/user-data/export')
+def export_user_data(request: Request):
+    """Export the user's recovery token and data for safekeeping."""
+    token = _get_or_create_user_token(request)
+    payload = _load_user_data(token)
+    response = JSONResponse({
+        'token': token,
+        'data': payload['data'],
+        'updated_at': payload['updated_at'],
+    })
+    _set_user_token(response, token)
+    return response
+
+
+@app.post('/api/user-data/import')
+def import_user_data(request: Request, payload: dict):
+    """Adopt another user's token (and optionally their data) on this device."""
+    token = payload.get('token', '').strip()
+    if not token:
+        raise HTTPException(status_code=400, detail='token is required')
+    provided_data = payload.get('data')
+    if isinstance(provided_data, dict):
+        _save_user_data(token, provided_data)
+    response = JSONResponse(_load_user_data(token))
+    _set_user_token(response, token)
+    return response
+
+
+@app.post('/api/user-data/reset')
+def reset_user_data(request: Request):
+    """Permanently delete the current user's server-side data."""
+    token = request.cookies.get(_USER_COOKIE)
+    if token:
+        _delete_user_data(token)
+    response = JSONResponse({'ok': True})
+    # Clear the user cookie so a fresh empty token is created next time.
+    response.delete_cookie(_USER_COOKIE, path='/')
     return response
 
 
 # Directories that file paths must stay within.
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
 BOOKS_DIR = os.path.join(DB_DIR, 'books')
+
+# Dedicated SQLite DB for user data (favourites, lists, shopping, etc.)
+_USER_DB_PATH = os.path.join(DB_DIR, 'cookster_user_data.db')
 
 
 def _is_under(path: str, base: str) -> bool:

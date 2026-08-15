@@ -1,9 +1,14 @@
 // Cookster local lists/favourites/shopping/meal-plan module.
-// All user data lives in localStorage; recipe metadata is fetched on demand.
+// User data is persisted server-side in SQLite and localStorage is kept as a
+// fast local cache. Changes are debounced and synced to the server.
 
 (function (root) {
   const STORAGE_KEY = 'cookster_lists_v3'
   const PREV_KEYS = ['cookster_lists_v2', 'cookster_lists']
+  const SERVER_DEBOUNCE_MS = 2000
+
+  let saveTimer = null
+  let lastServerPush = 0
 
   function today() {
     const d = new Date()
@@ -22,6 +27,19 @@
     return String(id)
   }
 
+  function emptyData() {
+    return {
+      favorites: [],
+      lists: [],
+      shopping: { items: [] },
+      mealPlan: {},
+      notes: {},
+      ratings: {},
+      cooked: {},
+      updatedAt: 0
+    }
+  }
+
   function migrate(raw) {
     if (!raw) return null
     try {
@@ -34,7 +52,8 @@
         mealPlan: parsed.mealPlan && typeof parsed.mealPlan === 'object' ? parsed.mealPlan : {},
         notes: parsed.notes && typeof parsed.notes === 'object' ? parsed.notes : {},
         ratings: parsed.ratings && typeof parsed.ratings === 'object' ? parsed.ratings : {},
-        cooked: parsed.cooked && typeof parsed.cooked === 'object' ? parsed.cooked : {}
+        cooked: parsed.cooked && typeof parsed.cooked === 'object' ? parsed.cooked : {},
+        updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0
       }
     } catch (e) {
       return null
@@ -58,17 +77,19 @@
         }
       }
       const parsed = migrate(raw || '{}')
-      return parsed || { favorites: [], lists: [], shopping: { items: [] }, mealPlan: {}, notes: {}, ratings: {}, cooked: {} }
+      return parsed || emptyData()
     } catch (e) {
       console.error('[cookster] failed to load lists', e)
-      return { favorites: [], lists: [], shopping: { items: [] }, mealPlan: {}, notes: {}, ratings: {}, cooked: {} }
+      return emptyData()
     }
   }
 
   function save(data) {
     try {
+      data.updatedAt = Date.now()
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
       notify()
+      schedulePush()
     } catch (e) {
       console.error('[cookster] failed to save lists', e)
     }
@@ -77,6 +98,89 @@
   function notify() {
     window.dispatchEvent(new CustomEvent('cookster-lists-changed', { detail: load() }))
   }
+
+  function schedulePush() {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(pushToServer, SERVER_DEBOUNCE_MS)
+  }
+
+  function pushToServer() {
+    const data = load()
+    // Avoid pushing more often than the debounce interval in very active sessions.
+    const now = Date.now()
+    if (now - lastServerPush < 500) return
+    lastServerPush = now
+    fetch('/api/user-data', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data })
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('server error ' + r.status)))
+      .then(() => {
+        window.dispatchEvent(new CustomEvent('cookster-sync-status', { detail: { status: 'saved', when: now } }))
+      })
+      .catch(err => {
+        console.error('[cookster] failed to sync to server', err)
+        window.dispatchEvent(new CustomEvent('cookster-sync-status', { detail: { status: 'error', when: now } }))
+      })
+  }
+
+  function pullFromServer() {
+    return fetch('/api/user-data', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('server error ' + r.status)))
+      .catch(err => {
+        console.error('[cookster] failed to load from server', err)
+        return null
+      })
+  }
+
+  function hasContent(data) {
+    if (!data) return false
+    return data.favorites.length > 0 ||
+      data.lists.length > 0 ||
+      (data.shopping && data.shopping.items && data.shopping.items.length > 0) ||
+      Object.keys(data.mealPlan || {}).length > 0 ||
+      Object.keys(data.notes || {}).length > 0 ||
+      Object.keys(data.ratings || {}).length > 0 ||
+      Object.keys(data.cooked || {}).length > 0
+  }
+
+  function resolveAndStore(serverPayload) {
+    if (!serverPayload) return
+    const serverData = serverPayload.data || {}
+    const serverTime = serverPayload.updated_at || serverData.updatedAt || 0
+    const localData = load()
+    const localTime = localData.updatedAt || 0
+
+    if (hasContent(serverData) && !hasContent(localData)) {
+      serverData.updatedAt = serverTime
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData))
+      notify()
+      return
+    }
+
+    if (!hasContent(serverData) && hasContent(localData)) {
+      pushToServer()
+      return
+    }
+
+    if (hasContent(serverData) && hasContent(localData)) {
+      if (serverTime > localTime) {
+        serverData.updatedAt = serverTime
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData))
+        notify()
+      } else if (localTime > serverTime) {
+        pushToServer()
+      }
+      return
+    }
+
+    // Both empty: nothing to do.
+  }
+
+  // Sync once on load so server data is adopted and local changes are uploaded.
+  pullFromServer().then(resolveAndStore)
 
   const api = {
     load,
@@ -333,11 +437,21 @@
         mealPlan: data.mealPlan && typeof data.mealPlan === 'object' ? data.mealPlan : {},
         notes: data.notes && typeof data.notes === 'object' ? data.notes : {},
         ratings: data.ratings && typeof data.ratings === 'object' ? data.ratings : {},
-        cooked: data.cooked && typeof data.cooked === 'object' ? data.cooked : {}
+        cooked: data.cooked && typeof data.cooked === 'object' ? data.cooked : {},
+        updatedAt: Date.now()
       }
       save(merged)
       return { ok: true }
-    }
+    },
+
+    // Server sync helpers --------------------------------------------------
+    syncNow() {
+      if (saveTimer) clearTimeout(saveTimer)
+      pushToServer()
+    },
+
+    pullFromServer,
+    pushToServer
   }
 
   root.CooksterLists = api

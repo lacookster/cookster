@@ -159,6 +159,16 @@ Recipes have a **stable_id**: a truncated SHA-256 hash of `title + source + ingr
 - If not, the API falls back to a full-table scan and filters results by whether query tokens actually appear in the candidate text.
 - Query text is sanitized before FTS5 `MATCH` to avoid syntax errors from special characters.
 
+### User data persistence
+
+Favourites, custom lists, shopping list, meal plan, notes, ratings and "cooked" history are persisted server-side in a dedicated SQLite database (`cookster_user_data.db`). `localStorage` is kept as a fast local cache.
+
+- Each user is identified by a long-lived `cookster_user` HTTP-only cookie (10-year expiry). It is **not** cleared on logout, so logging back in restores the same data.
+- On page load `static/lists.js` fetches the server blob, resolves conflicts using the `updatedAt` timestamp, and keeps both the server copy and `localStorage` in sync.
+- Every local change debounces a `POST /api/user-data` save (2-second debounce).
+- The Backup tab exposes a recovery code so users can link another device via `/api/user-data/import`.
+- `/api/user-data/reset` permanently deletes the server blob and clears the user cookie.
+
 ### Image handling
 
 - EPUB images are extracted to `static/epub_images/` and served as static files.
