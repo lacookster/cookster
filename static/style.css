@@ -575,6 +575,27 @@ header.top {
   margin-bottom: 16px;
 }
 
+.new-books-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.new-books-grid .book-card {
+  flex: 1 0 calc(20% - 13px);
+  min-width: 180px;
+  max-width: 260px;
+}
+
+@media (max-width: 639px) {
+  .new-books-grid .book-card {
+    flex: 0 0 75vw;
+    max-width: none;
+  }
+}
+
 .controls {
   display: flex;
   align-items: center;

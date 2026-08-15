@@ -150,7 +150,7 @@
       resultsEl.innerHTML = `
         <div class="new-books-home">
           <h2>📚 New cookbooks</h2>
-          <div class="books-grid">${books.map(renderNewBookCard).join('')}</div>
+          <div class="books-grid new-books-grid">${books.map(renderNewBookCard).join('')}</div>
         </div>`
     } catch (err) {
       console.error('[cookster] new books error:', err)
