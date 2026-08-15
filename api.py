@@ -273,6 +273,7 @@ def reset_user_data(request: Request):
 # Directories that file paths must stay within.
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
 BOOKS_DIR = os.path.join(DB_DIR, 'books')
+BOOKS_ADDED_DIR = os.path.join(BOOKS_DIR, 'added')
 
 # Dedicated SQLite DB for user data (favourites, lists, shopping, etc.)
 _USER_DB_PATH = os.path.join(DB_DIR, 'cookster_user_data.db')
@@ -305,14 +306,32 @@ def resolve_db_path(db: str) -> str:
 def resolve_download_path(file_path: str) -> str:
     """Resolve a download path to an absolute path inside BOOKS_DIR.
 
-    Stored paths may be relative to BOOKS_DIR or already absolute under it.
+    Stored paths are usually relative to the project root (e.g.
+    ``books\\file.epub`` or ``books\\added\\file.epub``). Paths that are
+    already absolute and lie inside ``BOOKS_DIR`` are also accepted.
     """
     if not file_path:
         raise ValueError('file_path is required')
+
+    candidates = []
     if os.path.isabs(file_path):
-        resolved = os.path.abspath(file_path)
+        candidates.append(os.path.abspath(file_path))
     else:
-        resolved = os.path.abspath(os.path.join(BOOKS_DIR, file_path))
+        # Primary interpretation: path is relative to the project root.
+        candidates.append(os.path.abspath(os.path.join(DB_DIR, file_path)))
+        # Older/bare paths may be relative to BOOKS_DIR itself.
+        candidates.append(os.path.abspath(os.path.join(BOOKS_DIR, file_path)))
+        candidates.append(os.path.abspath(os.path.join(BOOKS_ADDED_DIR, file_path)))
+        # Filename-only fallback for books moved into books/added.
+        candidates.append(os.path.abspath(os.path.join(BOOKS_ADDED_DIR, os.path.basename(file_path))))
+
+    for resolved in candidates:
+        if _is_under(resolved, BOOKS_DIR) and os.path.isfile(resolved):
+            return resolved
+
+    # Fallback to the primary candidate even if missing, so the error message
+    # remains predictable when a file genuinely does not exist.
+    resolved = candidates[0]
     if not _is_under(resolved, BOOKS_DIR):
         raise ValueError('download path is outside allowed directory')
     return resolved

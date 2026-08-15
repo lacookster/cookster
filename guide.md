@@ -54,7 +54,8 @@ All data lives locally. Favourites, lists, shopping, meal plans, notes and ratin
 │   ├── app.js              # Search page logic (pagination, lists, autocomplete, etc.)
 │   ├── recipe.js           # Recipe detail page logic (favourite, add-to-list, related recipes)
 │   └── lists.js            # localStorage favourites/lists module
-├── books/                  # Source EPUB/PDF files (not committed)
+├── books/                  # New EPUB/PDF files waiting to be indexed (not committed)
+├── books/added/            # Already-indexed EPUB/PDF files (not committed)
 ├── data/recipes/           # Preprocessed JSON per book (not committed)
 ├── static/epub_images/     # Extracted EPUB images (not committed)
 ├── cookster.db             # SQLite database (not committed)
@@ -113,7 +114,7 @@ books/  ──►  indexer.py  ──►  data/recipes/*.json
 
 ### Backend flow
 
-- `indexer.py` walks `books/`, extracts recipes, and writes one JSON file per book to `data/recipes/`.
+- `indexer.py` walks `books/` recursively, extracts recipes, and writes one JSON file per book to `data/recipes/`.
 - `indexer.index_preprocessed_dir()` creates/recreates the SQLite DB, loads the JSON recipes, and populates an optional FTS5 table.
 - `api.py` exposes endpoints. Search uses FTS5 to find candidate IDs when available, then ranks with `ranking.py`.
 - Recipe detail pages and downloads are served directly from the DB.
@@ -147,10 +148,19 @@ Recipes have a **stable_id**: a truncated SHA-256 hash of `title + source + ingr
 - `lists.js` emits a `cookster-lists-changed` event when state changes.
 - UI components listen for that event and re-render.
 
+### Book directories
+
+Cookster uses two locations under `books/`:
+
+- **`books/`** – new EPUB/PDF/MOBI cookbooks that have not been indexed yet. Run `run_index.py` to parse them and add their recipes to the database.
+- **`books/added/`** – cookbooks that are already in the database. Keeping them here lets you separate "to index" from "done" while still allowing downloads and full-book views.
+
+The indexer walks `books/` recursively, so `books/added/` is discovered automatically. The API resolves stored `file_path` values against the project root, so it finds books in either location. If you move an already-indexed book into `books/added/`, you do **not** need to rebuild the database.
+
 ### Security model
 
 - The `db` query parameter is sandboxed: paths must resolve inside `api.DB_DIR` (project root by default). `..` and absolute paths outside the project are rejected.
-- `/download/{id}` resolves the stored `file_path` against `api.BOOKS_DIR` (which is `books/`). Downloads outside `books/` are rejected.
+- `/download/{id}` resolves the stored `file_path` against the project root and only permits downloads inside `api.BOOKS_DIR` (which includes `books/` and `books/added/`). Paths outside `books/` are rejected.
 - Tests monkeypatch `api.DB_DIR` and `api.BOOKS_DIR` to temp directories so they can still test.
 
 ### FTS5 fallback
