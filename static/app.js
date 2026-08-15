@@ -48,7 +48,7 @@
   let currentView = 'search' // 'search' | 'list'
   let activeListId = null
   let activeSuggestion = -1
-  const limit = 10
+  const limit = 50
 
   if (lastQuery) qInput.value = lastQuery
 
