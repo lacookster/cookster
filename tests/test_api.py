@@ -123,15 +123,10 @@ def test_recipe_and_download():
     fd, dbpath = tempfile.mkstemp(suffix='.db')
     os.close(fd)
     _set_db_dir(dbpath)
-    # create dummy epub file in a temp books dir so download sandboxing passes
-    fd2, epub = tempfile.mkstemp(suffix='.epub')
-    os.close(fd2)
-    old_books_dir = api.BOOKS_DIR
-    api.BOOKS_DIR = os.path.dirname(epub)
     conn = sqlite3.connect(dbpath)
     c = conn.cursor()
     c.execute('CREATE TABLE recipes (id INTEGER PRIMARY KEY, title TEXT, ingredients TEXT, steps TEXT, source TEXT, file_path TEXT)')
-    c.execute('INSERT INTO recipes (title, ingredients, steps, source, file_path) VALUES (?,?,?,?,?)', ('T','i','s','src', epub))
+    c.execute('INSERT INTO recipes (title, ingredients, steps, source, file_path) VALUES (?,?,?,?,?)', ('T','i1\ni2','s1\ns2','src', 'books/file.epub'))
     conn.commit()
     conn.close()
 
@@ -140,13 +135,17 @@ def test_recipe_and_download():
     resp = client.get('/recipe/1', params={'db': os.path.basename(dbpath)})
     assert resp.status_code == 200
     assert 'T' in resp.text
-    # download
+    # download recipe as markdown
     resp2 = client.get('/download/1', params={'db': os.path.basename(dbpath)})
     assert resp2.status_code == 200
-    api.BOOKS_DIR = old_books_dir
+    assert 'text/markdown' in resp2.headers.get('content-type', '')
+    body = resp2.text
+    assert '# T' in body
+    assert 'From: src' in body
+    assert '- i1' in body
+    assert '1. s1' in body
     _restore_db_dir()
     os.remove(dbpath)
-    os.remove(epub)
 
 
 def test_db_path_sandboxing():
@@ -262,8 +261,11 @@ def test_download_path_sandboxing():
     conn.close()
 
     client = TestClient(app)
+    # download endpoint should not serve the source file, only a Markdown export of the recipe
     resp = client.get('/download/1', params={'db': os.path.basename(dbpath)})
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    assert 'text/markdown' in resp.headers.get('content-type', '')
+    assert '# T' in resp.text
     _restore_db_dir()
     os.remove(dbpath)
     os.remove(outside)

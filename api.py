@@ -23,7 +23,7 @@ except Exception:
     lemmatizer = None
 
 from fastapi import FastAPI, Form, Query, Request, Response, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
@@ -800,6 +800,7 @@ def recipe_view(request: Request, recipe_id: str, db: str = Query('cookster.db')
 
 @app.get('/download/{recipe_id}')
 def download_recipe(recipe_id: str, db: str = Query('cookster.db')):
+    """Download a single recipe as a Markdown file."""
     try:
         db_path = resolve_db_path(db)
     except ValueError as e:
@@ -812,15 +813,36 @@ def download_recipe(recipe_id: str, db: str = Query('cookster.db')):
     conn.close()
     if not recipe:
         return JSONResponse({'error': 'recipe not found'}, status_code=404)
-    file_path = recipe.get('file_path') or ''
-    try:
-        path = resolve_download_path(file_path)
-    except ValueError as e:
-        return JSONResponse({'error': str(e)}, status_code=400)
-    if not os.path.exists(path):
-        return JSONResponse({'error': 'file not found'}, status_code=404)
-    media_type = 'application/pdf' if path.lower().endswith('.pdf') else 'application/epub+zip'
-    return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
+
+    title = recipe.get('title', 'Recipe')
+    source = recipe.get('source', '')
+    serves = recipe.get('serves', '')
+    ingredients = recipe.get('ingredients', '')
+    steps = recipe.get('steps', '')
+
+    lines = [f'# {title}', '']
+    if source:
+        lines.append(f'From: {source}')
+    if serves:
+        lines.append(f'Serves: {serves}')
+    lines.append('')
+    lines.append('## Ingredients')
+    lines.append('')
+    for line in ingredients.split('\n'):
+        line = line.strip()
+        if line:
+            lines.append(f'- {line}')
+    lines.append('')
+    lines.append('## Method')
+    lines.append('')
+    for i, step in enumerate((s for s in steps.split('\n') if s.strip()), 1):
+        lines.append(f'{i}. {step.strip()}')
+    content = '\n'.join(lines)
+
+    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '-').replace('--', '-')[:60] or 'recipe'
+    filename = f'{safe_title}.md'
+    headers = {'Content-Disposition': f'attachment; filename="{filename}"'}
+    return PlainTextResponse(content, media_type='text/markdown; charset=utf-8', headers=headers)
 
 
 @app.get('/api/suggest')
