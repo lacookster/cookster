@@ -34,7 +34,6 @@ cookster_user_data.db
 tmp*.db
 data/recipes/
 static/epub_images/
-static/cookster-logo.jpg
 
 # Original book files (large binaries, not committed)
 books/
