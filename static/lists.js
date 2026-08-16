@@ -327,11 +327,11 @@
     },
 
     // Saved searches ---------------------------------------------------------
-    saveSearch(name, q, filters, source, sort) {
+    saveSearch(name, q, filters, source, sort, have = '') {
       const trimmed = (name || '').trim()
       if (!trimmed) return null
       const data = load()
-      const existing = data.savedSearches.findIndex(s => s.q === q && s.filters === filters && s.source === source && s.sort === sort)
+      const existing = data.savedSearches.findIndex(s => s.q === q && s.filters === filters && s.source === source && s.sort === sort && s.have === have)
       const search = {
         id: uuid(),
         label: trimmed,
@@ -339,6 +339,7 @@
         filters: filters || '',
         source: source || '',
         sort: sort || 'relevance',
+        have: have || '',
         createdAt: Date.now()
       }
       if (existing !== -1) data.savedSearches[existing] = search

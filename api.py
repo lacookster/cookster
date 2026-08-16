@@ -593,6 +593,26 @@ _FILTER_ONE_POT = {
     'one pan', 'one-pot', 'one pot', 'single pan', 'single pot', 'skillet',
     'traybake', 'sheet pan', 'baking tray', 'roasting tin', 'one tray'
 }
+_FILTER_BREAKFAST = {
+    'egg', 'toast', 'bacon', 'pancake', 'cereal', 'oatmeal', 'oats', 'breakfast', 'muffin', 'croissant'
+}
+_FILTER_LUNCH = {
+    'sandwich', 'wrap', 'soup', 'salad', 'lunch', 'quiche', 'tartine'
+}
+_FILTER_DINNER = {
+    'dinner', 'roast', 'stew', 'curry', 'casserole', 'main', 'entrée', 'entree', 'pasta', 'risotto', 'grilled'
+}
+_FILTER_SIDE = {
+    'side', 'accompaniment', 'salad', 'bread', 'rice', 'potatoes', 'vegetables', 'slaw'
+}
+_FILTER_SNACK = {
+    'snack', 'appetizer', 'starter', 'dip', 'nuts', 'chips', 'crackers', 'hummus', 'bruschetta'
+}
+
+
+def _contains_whole_word(text: str, word: str) -> bool:
+    """Return True if word appears as a whole word in text (case-insensitive)."""
+    return bool(re.search(r'\b' + re.escape(word.lower()) + r'\b', text.lower()))
 
 
 def _matches_filter(candidate: dict, name: str) -> bool:
@@ -631,6 +651,16 @@ def _matches_filter(candidate: dict, name: str) -> bool:
         if len(step_lines) <= 5 and len(steps) <= 600:
             return True
         return False
+    if name == 'breakfast':
+        return any(w in full_text for w in _FILTER_BREAKFAST)
+    if name == 'lunch':
+        return any(w in full_text for w in _FILTER_LUNCH)
+    if name == 'dinner':
+        return any(w in full_text for w in _FILTER_DINNER)
+    if name == 'side':
+        return any(w in full_text for w in _FILTER_SIDE)
+    if name == 'snack':
+        return any(w in full_text for w in _FILTER_SNACK)
     return True
 
 
@@ -701,7 +731,7 @@ def _suggest_correction(q: str, vocab: set) -> str:
     return suggestion if suggestion != q.lower() else ''
 
 
-def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None, filters: List[str] = None, sort: str = 'relevance', pantry: str = None):
+def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None, filters: List[str] = None, sort: str = 'relevance', pantry: str = None, exclude: str = None, have: str = None):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     _ensure_schema(conn)
@@ -755,6 +785,28 @@ def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str 
     for f in filters:
         ranked = [c for c in ranked if _matches_filter(c, f)]
 
+    # Exclude ingredients: drop candidates whose title, ingredients, or steps
+    # contain any excluded item as a whole word (case-insensitive).
+    exclude_items = [e.strip() for e in (exclude or '').split(',') if e.strip()]
+    if exclude_items:
+        def _is_excluded(c):
+            text = ((c.get('title') or '') + ' ' + (c.get('ingredients') or '') + ' ' + (c.get('steps') or '')).lower()
+            return any(_contains_whole_word(text, e) for e in exclude_items)
+        ranked = [c for c in ranked if not _is_excluded(c)]
+
+    # "What can I make?" mode: sort by percentage of provided ingredients found
+    # in the recipe's ingredients. Whole-word, case-insensitive matching.
+    have_items = [h.strip() for h in (have or '').split(',') if h.strip()]
+    if have_items:
+        for c in ranked:
+            ing = (c.get('ingredients') or '').lower()
+            matches = sum(1 for h in have_items if _contains_whole_word(ing, h))
+            c['have_match_count'] = matches
+            c['have_total'] = len(have_items)
+            c['have_match_pct'] = int(round(100 * matches / len(have_items)))
+        # Sort primarily by match percentage, then by existing relevance score.
+        ranked.sort(key=lambda c: (c.get('have_match_pct', 0), c.get('score', 0.0) or 0.0), reverse=True)
+
     # Small pantry boost: bonus for recipes that contain pantry items as whole words.
     pantry_items = [p.strip() for p in (pantry or '').split(',') if p.strip()] if pantry else []
     if pantry_items and sort == 'relevance':
@@ -764,15 +816,29 @@ def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str 
             c['score'] = (c.get('score', 0.0) or 0.0) + bonus
         ranked.sort(key=lambda c: c['score'], reverse=True)
 
-    # apply sort order
+    # "What can I make?" mode: sort by percentage of provided ingredients found
+    # in the recipe's ingredients. Whole-word, case-insensitive matching.
+    have_items = [h.strip() for h in (have or '').split(',') if h.strip()]
+    if have_items:
+        for c in ranked:
+            ing = (c.get('ingredients') or '').lower()
+            matches = sum(1 for h in have_items if _contains_whole_word(ing, h))
+            c['have_match_count'] = matches
+            c['have_total'] = len(have_items)
+            c['have_match_pct'] = int(round(100 * matches / len(have_items)))
+        # Sort primarily by match percentage, then by existing relevance score.
+        ranked.sort(key=lambda c: (c.get('have_match_pct', 0), c.get('score', 0.0) or 0.0), reverse=True)
+
+    # apply sort order (have mode overrides to percentage sort)
     sort = (sort or 'relevance').lower()
-    if sort == 'az':
-        ranked.sort(key=lambda c: (c.get('title') or '').lower())
-    elif sort == 'recent':
-        ranked.sort(key=lambda c: c.get('id', 0), reverse=True)
-    elif sort == 'random':
-        import random
-        random.shuffle(ranked)
+    if not have_items:
+        if sort == 'az':
+            ranked.sort(key=lambda c: (c.get('title') or '').lower())
+        elif sort == 'recent':
+            ranked.sort(key=lambda c: c.get('id', 0), reverse=True)
+        elif sort == 'random':
+            import random
+            random.shuffle(ranked)
 
     total = len(ranked)
 
@@ -792,6 +858,9 @@ def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str 
             'steps_snippet': _snippet(r.get('steps',''), q),
             'image_url': _image_path_to_url(r.get('image', '')),
             'score': r.get('score', 0.0),
+            'have_match_count': r.get('have_match_count', 0),
+            'have_total': r.get('have_total', 0),
+            'have_match_pct': r.get('have_match_pct', 0),
         })
     conn.close()
     return results, total
@@ -805,14 +874,16 @@ def ui(request: Request):
 
 
 @app.get('/search')
-def search(q: str = Query(..., min_length=1),
+def search(q: str = Query(''),
            db: str = Query('cookster.db'),
            limit: int = Query(10, ge=1, le=100),
            page: int = Query(1, ge=1, le=10000),
            source: str = Query(None),
            filters: str = Query(None),
            sort: str = Query('relevance'),
-           pantry: str = Query(None)):
+           pantry: str = Query(None),
+           exclude: str = Query(None),
+           have: str = Query(None)):
     try:
         db_path = resolve_db_path(db)
     except ValueError as e:
@@ -820,9 +891,11 @@ def search(q: str = Query(..., min_length=1),
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
     filter_list = [f.strip() for f in (filters or '').split(',') if f.strip()]
-    results, total = _query_db(db_path, q, limit, page, source=source, filters=filter_list, sort=sort, pantry=pantry)
+    results, total = _query_db(db_path, q, limit, page, source=source, filters=filter_list, sort=sort, pantry=pantry, exclude=exclude, have=have)
     pantry_list = [p.strip() for p in (pantry or '').split(',') if p.strip()]
-    return {'query': q, 'results': results, 'page': page, 'total': total, 'source': source, 'filters': filter_list, 'sort': sort, 'pantry': pantry_list}
+    exclude_list = [e.strip() for e in (exclude or '').split(',') if e.strip()]
+    have_list = [h.strip() for h in (have or '').split(',') if h.strip()]
+    return {'query': q, 'results': results, 'page': page, 'total': total, 'source': source, 'filters': filter_list, 'sort': sort, 'pantry': pantry_list, 'exclude': exclude_list, 'have': have_list}
 
 
 @app.get('/api/sources')

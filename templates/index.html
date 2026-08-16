@@ -44,6 +44,18 @@
         </div>
       </div>
 
+      <div class="search-options">
+        <button id="what-i-have-toggle" class="btn secondary what-i-have-toggle" type="button" aria-pressed="false" title="Find recipes using ingredients you already have">🥫 Use what I have</button>
+        <div class="search-box exclude-box">
+          <span class="search-icon" aria-hidden="true">🚫</span>
+          <input id="exclude" placeholder="Exclude: mushrooms, coriander…" autocomplete="off" aria-label="Excluded ingredients" />
+        </div>
+        <div class="search-box have-box" id="have-box" style="display:none">
+          <span class="search-icon" aria-hidden="true">✅</span>
+          <input id="have" placeholder="I have: chicken, rice, garlic…" autocomplete="off" aria-label="Ingredients you have" />
+        </div>
+      </div>
+
       <div class="search-actions">
         <div class="search-filters">
           <select id="source" aria-label="Filter by book">
@@ -76,6 +88,11 @@
         <button class="filter-chip" data-filter="quick" aria-pressed="false">⏱ Quick</button>
         <button class="filter-chip" data-filter="dessert" aria-pressed="false">🍰 Dessert</button>
         <button class="filter-chip" data-filter="one-pot" aria-pressed="false">🍳 One-pot</button>
+        <button class="filter-chip" data-filter="breakfast" aria-pressed="false">🍳 Breakfast</button>
+        <button class="filter-chip" data-filter="lunch" aria-pressed="false">🥪 Lunch</button>
+        <button class="filter-chip" data-filter="dinner" aria-pressed="false">🍽 Dinner</button>
+        <button class="filter-chip" data-filter="side" aria-pressed="false">🥗 Side</button>
+        <button class="filter-chip" data-filter="snack" aria-pressed="false">🍿 Snack</button>
       </div>
 
       <div id="active-filters" class="active-filters" aria-live="polite"></div>

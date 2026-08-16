@@ -45,6 +45,10 @@
   const addPantryBtn = document.getElementById('add-pantry')
   const pantryListEl = document.getElementById('pantry-list')
   const pantryBoost = document.getElementById('pantry-boost')
+  const excludeInput = document.getElementById('exclude')
+  const haveInput = document.getElementById('have')
+  const haveBox = document.getElementById('have-box')
+  const whatIHaveToggle = document.getElementById('what-i-have-toggle')
 
   const suggestionsEl = document.getElementById('suggestions')
   const recentSearchesEl = document.getElementById('recent-searches')
@@ -66,6 +70,9 @@
   let currentSort = (params.get('sort') || 'relevance').trim()
   let activeFilters = new Set((params.get('filters') || '').split(',').filter(Boolean))
   let boostPantry = (params.get('pantry') || '').trim() !== ''
+  let whatIHaveMode = (params.get('have') || '').trim() !== ''
+  let excludeValue = (params.get('exclude') || '').trim()
+  let haveValue = (params.get('have') || '').trim()
   let totalResults = 0
   let currentView = 'search' // 'search' | 'list'
   let activeListId = null
@@ -94,6 +101,8 @@
   const saveSearchBtn = document.getElementById('save-search')
 
   if (lastQuery) qInput.value = lastQuery
+  if (excludeValue && excludeInput) excludeInput.value = excludeValue
+  if (haveValue && haveInput) haveInput.value = haveValue
 
   function setBusy(v) { busy.style.display = v ? 'block' : 'none' }
 
@@ -112,6 +121,10 @@
     pageEl.parentElement.style.display = currentView === 'search' ? '' : 'none'
   }
 
+  function parseListInput(value) {
+    return value.split(',').map(s => s.trim()).filter(Boolean)
+  }
+
   function updateFilterChips() {
     if (!filterChipsEl) return
     filterChipsEl.querySelectorAll('.filter-chip').forEach(btn => {
@@ -121,19 +134,33 @@
       btn.setAttribute('aria-pressed', String(active))
     })
     if (activeFiltersEl) {
-      if (activeFilters.size === 0) {
+      const filterTags = Array.from(activeFilters).map(f =>
+        `<span class="active-filter-tag" data-filter="${escapeHtml(f)}">${escapeHtml(f.replace(/-/g, ' '))} <button aria-label="Remove ${escapeHtml(f.replace(/-/g, ' '))} filter">×</button></span>`
+      )
+      const excludeTags = parseListInput(excludeValue).map(e =>
+        `<span class="active-filter-tag exclude-tag" data-exclude="${escapeHtml(e)}">${escapeHtml(e)} <button aria-label="Remove ${escapeHtml(e)} exclusion">×</button></span>`
+      )
+      const tags = filterTags.concat(excludeTags)
+      if (tags.length === 0) {
         activeFiltersEl.innerHTML = ''
       } else {
-        activeFiltersEl.innerHTML = Array.from(activeFilters).map(f =>
-          `<span class="active-filter-tag" data-filter="${escapeHtml(f)}">${escapeHtml(f.replace(/-/g, ' '))} <button aria-label="Remove ${escapeHtml(f.replace(/-/g, ' '))} filter">×</button></span>`
-        ).join('')
+        activeFiltersEl.innerHTML = tags.join('')
       }
       activeFiltersEl.querySelectorAll('.active-filter-tag').forEach(tag => {
         tag.querySelector('button').addEventListener('click', () => {
-          activeFilters.delete(tag.dataset.filter)
-          updateFilterChips()
-          page = 1
-          doSearch({ pushHistory: true })
+          if (tag.dataset.filter) {
+            activeFilters.delete(tag.dataset.filter)
+            updateFilterChips()
+            page = 1
+            doSearch({ pushHistory: true })
+          } else if (tag.dataset.exclude) {
+            const remaining = parseListInput(excludeValue).filter(x => x.toLowerCase() !== tag.dataset.exclude.toLowerCase())
+            excludeValue = remaining.join(', ')
+            if (excludeInput) excludeInput.value = excludeValue
+            updateFilterChips()
+            page = 1
+            doSearch({ pushHistory: true })
+          }
         })
       })
     }
@@ -230,7 +257,7 @@
       <span class="saved-searches-label">Saved</span>
       ${saved.map(s => `
         <span class="saved-search-chip" data-id="${escapeHtml(s.id)}" role="button" tabindex="0">
-          <span class="saved-search-text">${escapeHtml(s.label || s.q)}${s.sort && s.sort !== 'relevance' ? ` · ${escapeHtml(s.sort)}` : ''}</span>
+          <span class="saved-search-text">${escapeHtml(s.label || s.q || s.have)}${s.have ? ' 🥫' : ''}${s.sort && s.sort !== 'relevance' ? ` · ${escapeHtml(s.sort)}` : ''}</span>
           <button class="saved-search-delete" aria-label="Remove saved search">×</button>
         </span>
       `).join('')}
@@ -245,6 +272,11 @@
         updateFilterChips()
         if (sortSelect) sortSelect.value = s.sort || 'relevance'
         if (sourceSelect) sourceSelect.value = s.source || ''
+        if (haveInput) {
+          haveInput.value = s.have || ''
+          haveValue = s.have || ''
+          updateWhatIHaveMode(!!s.have)
+        }
         doSearch({ pushHistory: true })
       })
     })
@@ -261,7 +293,8 @@
   function updateSaveSearchButton() {
     if (!saveSearchBtn) return
     const q = qInput.value.trim()
-    const enabled = q && currentView === 'search'
+    const have = haveInput ? haveInput.value.trim() : ''
+    const enabled = (q || have) && currentView === 'search'
     saveSearchBtn.disabled = !enabled
   }
 
@@ -462,6 +495,7 @@
           <div class="card-meta">
             <a href="/book?source=${encodeURIComponent(r.source_raw || r.source)}">${r.source}</a>
             ${r.serves ? `<span class="card-serves">🍽 ${escapeHtml(r.serves)}</span>` : ''}
+            ${r.have_total ? `<span class="have-match-badge" title="${r.have_match_count} of ${r.have_total} ingredients matched">Matched ${r.have_match_count} / ${r.have_total}</span>` : ''}
             <span class="score">${(r.score || 0).toFixed(2)}</span>
           </div>
           ${renderRatingStars(Lists.getRating(sid), '0.95rem')}
@@ -559,8 +593,11 @@
     const filters = filtersQuery()
     const sort = sortSelect ? sortSelect.value : 'relevance'
     const pantryItems = Lists.getPantry()
-    if (q && currentView === 'search') {
-      url.searchParams.set('q', q)
+    const exclude = excludeInput ? excludeInput.value.trim() : ''
+    const have = haveInput ? haveInput.value.trim() : ''
+    if ((q || have) && currentView === 'search') {
+      if (q) url.searchParams.set('q', q)
+      else url.searchParams.delete('q')
       url.searchParams.set('page', String(page))
       if (source) url.searchParams.set('source', source)
       else url.searchParams.delete('source')
@@ -570,6 +607,10 @@
       else url.searchParams.delete('sort')
       if (boostPantry && pantryItems.length) url.searchParams.set('pantry', pantryItems.join(','))
       else url.searchParams.delete('pantry')
+      if (exclude) url.searchParams.set('exclude', exclude)
+      else url.searchParams.delete('exclude')
+      if (have) url.searchParams.set('have', have)
+      else url.searchParams.delete('have')
     } else {
       url.searchParams.delete('q')
       url.searchParams.delete('page')
@@ -577,6 +618,8 @@
       url.searchParams.delete('filters')
       url.searchParams.delete('sort')
       url.searchParams.delete('pantry')
+      url.searchParams.delete('exclude')
+      url.searchParams.delete('have')
     }
     if (currentView === 'list' && activeListId) {
       url.searchParams.set('view', 'list')
@@ -586,9 +629,9 @@
       url.searchParams.delete('list')
     }
     if (push) {
-      history.pushState({ q, page, source, filters, sort, currentView, activeListId, pantry: boostPantry ? pantryItems.join(',') : '' }, '', url.toString())
+      history.pushState({ q, page, source, filters, sort, currentView, activeListId, pantry: boostPantry ? pantryItems.join(',') : '', exclude, have }, '', url.toString())
     } else {
-      history.replaceState({ q, page, source, filters, sort, currentView, activeListId, pantry: boostPantry ? pantryItems.join(',') : '' }, '', url.toString())
+      history.replaceState({ q, page, source, filters, sort, currentView, activeListId, pantry: boostPantry ? pantryItems.join(',') : '', exclude, have }, '', url.toString())
     }
   }
 
@@ -596,8 +639,10 @@
     const { pushHistory = false, scroll = true } = options
     const q = qInput.value.trim()
     const source = sourceSelect ? sourceSelect.value : ''
+    const have = haveInput ? haveInput.value.trim() : ''
+    const exclude = excludeInput ? excludeInput.value.trim() : ''
 
-    if (!q) {
+    if (!q && !have) {
       loadNewBooks()
       return
     }
@@ -605,21 +650,26 @@
     currentView = 'search'
     activeListId = null
     const sort = sortSelect ? sortSelect.value : currentSort
-    if (q !== lastQuery || source !== lastSource || sort !== currentSort) {
+    if (q !== lastQuery || source !== lastSource || sort !== currentSort || have !== haveValue || exclude !== excludeValue) {
       page = 1
       lastQuery = q
       lastSource = source
       currentSort = sort
+      haveValue = have
+      excludeValue = exclude
     }
 
     setBusy(true)
     try {
+      const qParam = q ? `q=${encodeURIComponent(q)}` : 'q='
       const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
       const filterParam = activeFilters.size ? `&filters=${encodeURIComponent(filtersQuery())}` : ''
       const sortParam = sort && sort !== 'relevance' ? `&sort=${encodeURIComponent(sort)}` : ''
       const pantryItems = boostPantry ? Lists.getPantry() : []
       const pantryParam = (boostPantry && pantryItems.length) ? `&pantry=${encodeURIComponent(pantryItems.join(','))}` : ''
-      const res = await fetch(`/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}${sourceParam}${filterParam}${sortParam}${pantryParam}`)
+      const excludeParam = exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''
+      const haveParam = have ? `&have=${encodeURIComponent(have)}` : ''
+      const res = await fetch(`/search?${qParam}&page=${page}&limit=${limit}${sourceParam}${filterParam}${sortParam}${pantryParam}${excludeParam}${haveParam}`)
       if (!res.ok) throw new Error(`Search failed (${res.status})`)
       const data = await res.json()
       totalResults = data.total || 0
@@ -629,19 +679,22 @@
       resultsEl.innerHTML = ''
       if (!data.results || data.results.length === 0) {
         const activeFilterText = activeFilters.size ? ` with filters ${Array.from(activeFilters).map(f => f.replace(/-/g, ' ')).join(', ')}` : ''
+        const haveText = have ? ` using “${escapeHtml(have)}”` : ''
         let suggestionHtml = ''
-        try {
-          const corrRes = await fetch(`/api/suggest-correction?q=${encodeURIComponent(q)}`)
-          if (corrRes.ok) {
-            const corr = await corrRes.json()
-            if (corr.suggestion && corr.suggestion.toLowerCase() !== q.toLowerCase()) {
-              suggestionHtml = `<p>Did you mean <button class="text-link" id="suggestion-link">“${escapeHtml(corr.suggestion)}”</button>?</p>`
+        if (q) {
+          try {
+            const corrRes = await fetch(`/api/suggest-correction?q=${encodeURIComponent(q)}`)
+            if (corrRes.ok) {
+              const corr = await corrRes.json()
+              if (corr.suggestion && corr.suggestion.toLowerCase() !== q.toLowerCase()) {
+                suggestionHtml = `<p>Did you mean <button class="text-link" id="suggestion-link">“${escapeHtml(corr.suggestion)}”</button>?</p>`
+              }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
         resultsEl.innerHTML = `
           <div class="empty empty-search">
-            <h2>😕 No recipes found for “${escapeHtml(q)}”${escapeHtml(activeFilterText)}</h2>
+            <h2>😕 No recipes found${q ? ` for “${escapeHtml(q)}”` : ''}${escapeHtml(activeFilterText)}${escapeHtml(haveText)}</h2>
             <p>We couldn't find a match. Try one of these popular searches, remove a filter, or check your spelling.</p>
             ${suggestionHtml}
             <div class="empty-actions">
@@ -679,7 +732,7 @@
       resultsEl.innerHTML = data.results.map(renderCard).join('')
       bindCardActions()
       syncUrl(pushHistory)
-      saveRecentSearch(q, filtersQuery(), sort)
+      if (q) saveRecentSearch(q, filtersQuery(), sort)
       updateSaveSearchButton()
       if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
@@ -1512,10 +1565,11 @@
   if (saveSearchBtn) {
     saveSearchBtn.addEventListener('click', () => {
       const q = qInput.value.trim()
-      if (!q) return
-      const name = prompt('Name this saved search:', q)
+      const have = haveInput ? haveInput.value.trim() : ''
+      if (!q && !have) return
+      const name = prompt('Name this saved search:', q || have)
       if (!name) return
-      Lists.saveSearch(name, q, filtersQuery(), sourceSelect ? sourceSelect.value : '', sortSelect ? sortSelect.value : 'relevance')
+      Lists.saveSearch(name, q, filtersQuery(), sourceSelect ? sourceSelect.value : '', sortSelect ? sortSelect.value : 'relevance', have)
       renderSavedSearches()
       showToast('Search saved')
     })
@@ -1540,10 +1594,50 @@
     pantryBoost.checked = boostPantry
     pantryBoost.addEventListener('change', () => {
       boostPantry = pantryBoost.checked
-      if (qInput.value.trim()) doSearch({ pushHistory: true })
+      if (qInput.value.trim() || (haveInput && haveInput.value.trim())) doSearch({ pushHistory: true })
       else syncUrl(false)
     })
   }
+
+  function updateWhatIHaveMode(active) {
+    whatIHaveMode = active
+    if (whatIHaveToggle) {
+      whatIHaveToggle.setAttribute('aria-pressed', String(active))
+      whatIHaveToggle.classList.toggle('active', active)
+    }
+    if (haveBox) haveBox.style.display = active ? '' : 'none'
+  }
+
+  if (whatIHaveToggle) {
+    whatIHaveToggle.addEventListener('click', () => {
+      updateWhatIHaveMode(!whatIHaveMode)
+      if (whatIHaveMode) {
+        if (haveInput) haveInput.focus()
+      } else if (haveInput) {
+        haveInput.value = ''
+        haveValue = ''
+      }
+      page = 1
+      doSearch({ pushHistory: true })
+    })
+  }
+
+  if (excludeInput) {
+    excludeInput.addEventListener('input', () => {
+      excludeValue = excludeInput.value.trim()
+      debounceSearch()
+    })
+    excludeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { closeSuggestions(); doSearch({ pushHistory: true }) } })
+  }
+
+  if (haveInput) {
+    haveInput.addEventListener('input', () => {
+      haveValue = haveInput.value.trim()
+      debounceSearch()
+    })
+    haveInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { closeSuggestions(); doSearch({ pushHistory: true }) } })
+  }
+
   nextBtn.addEventListener('click', () => { if (page < totalPages()) { page++; doSearch({ pushHistory: true }) } })
   prevBtn.addEventListener('click', () => { if (page > 1) { page--; doSearch({ pushHistory: true }) } })
 
@@ -1607,13 +1701,20 @@
     const newSort = (p.get('sort') || 'relevance').trim()
     boostPantry = (p.get('pantry') || '').trim() !== ''
     if (pantryBoost) pantryBoost.checked = boostPantry
-    const view = p.get('view')
-    const listId = p.get('list')
+    const newExclude = (p.get('exclude') || '').trim()
+    const newHave = (p.get('have') || '').trim()
+    if (excludeInput) excludeInput.value = newExclude
+    excludeValue = newExclude
+    if (haveInput) haveInput.value = newHave
+    haveValue = newHave
+    updateWhatIHaveMode(!!newHave)
     if (sourceSelect) sourceSelect.value = newSource
     if (sortSelect) sortSelect.value = newSort
     activeFilters = newFilters
     currentSort = newSort
     updateFilterChips()
+    const view = p.get('view')
+    const listId = p.get('list')
     if (view === 'list' && listId) {
       page = 1
       qInput.value = newQ
@@ -1720,6 +1821,7 @@
   loadStats()
   setInterval(loadStats, 60000)
   renderListsPanel()
+  updateWhatIHaveMode(whatIHaveMode)
   updateFilterChips()
   renderSavedSearches()
   updateSaveSearchButton()
@@ -1728,7 +1830,7 @@
   const listParam = params.get('list')
   if (viewParam === 'list' && listParam) {
     showList(listParam, { pushHistory: false, scroll: false })
-  } else if (lastQuery) {
+  } else if (lastQuery || haveValue) {
     doSearch({ pushHistory: false, scroll: false })
   } else {
     loadNewBooks()

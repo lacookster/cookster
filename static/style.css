@@ -242,6 +242,83 @@ header.top {
 .search-box button:hover { background: var(--accent-hover); }
 .search-box button:active { transform: scale(0.97); }
 
+.search-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.search-options .what-i-have-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.search-options .what-i-have-toggle.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-options .exclude-box,
+.search-options .have-box {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.search-options .exclude-box input,
+.search-options .have-box input {
+  padding: 14px 18px 14px 48px;
+  font-size: 1rem;
+  border-style: dashed;
+}
+
+.search-options .exclude-box input:focus {
+  border-color: var(--accent);
+  border-style: solid;
+}
+.search-options .have-box input:focus {
+  border-color: var(--accent-warm);
+  border-style: solid;
+}
+
+.have-match-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 50px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.active-filter-tag.exclude-tag {
+  background: #fdeaea;
+  border-color: #c0392b;
+  color: #c0392b;
+}
+.active-filter-tag.exclude-tag button {
+  color: #c0392b;
+}
+.active-filter-tag.exclude-tag button:hover {
+  color: #a93226;
+}
+
+@media (max-width: 480px) {
+  .search-options .exclude-box,
+  .search-options .have-box {
+    flex: 1 1 100%;
+  }
+  .search-options .what-i-have-toggle {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}
+
 .suggestions {
   position: absolute;
   top: calc(100% + 6px);
