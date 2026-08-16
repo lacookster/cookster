@@ -185,15 +185,22 @@
     <div id="cooking-overlay" class="cooking-overlay" aria-hidden="true">
       <div class="cooking-header">
         <div class="cooking-progress"><span id="cooking-step-num">1</span> / <span id="cooking-step-total">1</span></div>
-        <button id="cooking-close" class="icon-btn" aria-label="Close cooking mode">✕</button>
+        <div class="cooking-header-actions">
+          <button id="cooking-voice" class="icon-btn" aria-label="Voice commands" title="Voice commands">🎤</button>
+          <button id="cooking-fullscreen" class="icon-btn" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
+          <button id="cooking-close" class="icon-btn" aria-label="Close cooking mode">✕</button>
+        </div>
       </div>
       <div class="cooking-body">
         <div id="cooking-step-text" class="cooking-step-text"></div>
+        <div id="voice-status" class="voice-status" aria-live="polite"></div>
         <div id="cooking-timers" class="cooking-timers"></div>
       </div>
       <div class="cooking-footer">
         <button id="cooking-prev" class="btn secondary">← Previous</button>
+        <button id="cooking-repeat" class="btn secondary">🔁 Repeat</button>
         <button id="cooking-read" class="btn secondary">🔊 Read aloud</button>
+        <button id="cooking-reset-timers" class="btn secondary">🔄 Reset timers</button>
         <button id="cooking-next" class="btn">Next →</button>
       </div>
     </div>

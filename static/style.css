@@ -2007,10 +2007,58 @@ header.top {
   justify-content: center;
   gap: 16px;
   padding-top: 20px;
+  flex-wrap: wrap;
 }
 .cooking-footer .btn {
   padding: 14px 28px;
   font-size: 1.05rem;
+}
+
+.cooking-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cooking-header-actions .icon-btn {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 1.4rem;
+  padding: 8px 12px;
+  line-height: 1;
+  transition: background 0.2s, color 0.2s, transform 0.1s;
+}
+.cooking-header-actions .icon-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+.cooking-header-actions .icon-btn:active {
+  transform: scale(0.95);
+}
+
+#cooking-voice.listening {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  animation: pulse 1.2s infinite;
+}
+
+#cooking-fullscreen.fullscreen-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.voice-status {
+  min-height: 1.5em;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.voice-status.has-content {
+  opacity: 1;
 }
 
 .card-meta a { color: var(--text-secondary); }

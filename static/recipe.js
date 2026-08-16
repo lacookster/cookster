@@ -335,10 +335,18 @@
   const cookingStepTotal = document.getElementById('cooking-step-total')
   const cookingTimersEl = document.getElementById('cooking-timers')
   const cookingReadBtn = document.getElementById('cooking-read')
+  const cookingVoice = document.getElementById('cooking-voice')
+  const cookingFullscreen = document.getElementById('cooking-fullscreen')
+  const voiceStatus = document.getElementById('voice-status')
+  const cookingRepeat = document.getElementById('cooking-repeat')
+  const cookingResetTimers = document.getElementById('cooking-reset-timers')
 
   let cookingSteps = []
   let cookingIndex = 0
   const activeTimers = new Map()
+  let wakeLock = null
+  let recognition = null
+  let isListening = false
 
   function initCooking() {
     if (!cookingOverlay) return
@@ -350,20 +358,66 @@
     cookingOverlay.classList.add('open')
     cookingOverlay.setAttribute('aria-hidden', 'false')
     document.body.style.overflow = 'hidden'
+    requestWakeLock()
   }
 
   function closeCooking() {
     if (!cookingOverlay) return
     stopSpeech()
+    stopVoiceListening()
+    releaseWakeLock()
     cookingOverlay.classList.remove('open')
     cookingOverlay.setAttribute('aria-hidden', 'true')
     document.body.style.overflow = ''
   }
 
+  function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return
+    try {
+      navigator.wakeLock.request('screen').then(lock => {
+        wakeLock = lock
+        lock.addEventListener('release', () => {
+          wakeLock = null
+          if (cookingOverlay && cookingOverlay.classList.contains('open')) {
+            requestWakeLock()
+          }
+        })
+      }).catch(err => {
+        console.warn('[cookster] wake lock request failed:', err)
+      })
+    } catch (e) {
+      console.warn('[cookster] wake lock error:', e)
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) {
+      try {
+        wakeLock.release()
+      } catch (e) {}
+      wakeLock = null
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && cookingOverlay && cookingOverlay.classList.contains('open') && !wakeLock) {
+      requestWakeLock()
+    }
+  })
+
   function stopSpeech() {
     try {
       if (window.speechSynthesis) window.speechSynthesis.cancel()
     } catch (e) {}
+  }
+
+  function readCurrentStep() {
+    if (!window.speechSynthesis || !cookingSteps.length) return
+    stopSpeech()
+    const text = cookingSteps[cookingIndex]
+    if (!text) return
+    const utterance = new SpeechSynthesisUtterance(text)
+    window.speechSynthesis.speak(utterance)
   }
 
   function toggleSpeech() {
@@ -372,13 +426,171 @@
       window.speechSynthesis.cancel()
       return
     }
-    const text = cookingSteps[cookingIndex]
-    if (!text) return
-    const utterance = new SpeechSynthesisUtterance(text)
-    window.speechSynthesis.speak(utterance)
+    readCurrentStep()
   }
 
-  function parseStepTimes(text) {
+  function setVoiceStatus(message) {
+    if (!voiceStatus) return
+    voiceStatus.textContent = message || ''
+    voiceStatus.classList.toggle('has-content', !!message)
+  }
+
+  function initVoiceRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return null
+    const r = new SpeechRecognition()
+    r.continuous = true
+    r.interimResults = true
+    r.lang = document.documentElement.lang || 'en-US'
+    r.onresult = (event) => {
+      const last = event.results[event.results.length - 1]
+      const transcript = last[0].transcript.trim().toLowerCase()
+      setVoiceStatus(transcript)
+      if (last.isFinal) {
+        handleVoiceCommand(transcript)
+      }
+    }
+    r.onerror = (event) => {
+      if (event.error === 'no-speech') {
+        setVoiceStatus('No speech detected')
+      } else if (event.error === 'aborted' || event.error === 'not-allowed') {
+        setVoiceStatus('Voice error: ' + event.error)
+        stopVoiceListening()
+      } else {
+        setVoiceStatus('Voice error: ' + event.error)
+      }
+    }
+    r.onnomatch = () => {
+      setVoiceStatus('No command recognised')
+    }
+    r.onend = () => {
+      if (isListening) {
+        try { r.start() } catch (e) {}
+      }
+    }
+    return r
+  }
+
+  function handleVoiceCommand(command) {
+    if (command.includes('next') || command.includes('forward') || command.includes('continue')) {
+      cookingNext.click()
+    } else if (command.includes('previous') || command.includes('back')) {
+      cookingPrev.click()
+    } else if (command.includes('repeat') || command.includes('again') || command.includes('read')) {
+      readCurrentStep()
+    } else if (command.includes('close') || command.includes('stop') || command.includes('exit')) {
+      closeCooking()
+    } else if (command.includes('timer') || command.includes('start timer')) {
+      startAllStepTimers()
+    } else if (command.includes('fullscreen') || command.includes('full screen')) {
+      toggleFullscreen()
+    } else {
+      setVoiceStatus('Unknown command: "' + command + '"')
+    }
+  }
+
+  function startVoiceListening() {
+    if (!recognition) recognition = initVoiceRecognition()
+    if (!recognition) return
+    try {
+      isListening = true
+      recognition.start()
+      if (cookingVoice) {
+        cookingVoice.classList.add('listening')
+        cookingVoice.setAttribute('aria-label', 'Stop voice commands')
+        cookingVoice.setAttribute('title', 'Stop voice commands')
+      }
+      setVoiceStatus('Listening…')
+    } catch (e) {
+      isListening = false
+      setVoiceStatus('Could not start voice listening')
+      console.error('[cookster] voice start error:', e)
+    }
+  }
+
+  function stopVoiceListening() {
+    isListening = false
+    if (cookingVoice) {
+      cookingVoice.classList.remove('listening')
+      cookingVoice.setAttribute('aria-label', 'Voice commands')
+      cookingVoice.setAttribute('title', 'Voice commands')
+    }
+    setVoiceStatus('')
+    if (recognition) {
+      try { recognition.stop() } catch (e) {}
+    }
+  }
+
+  function toggleVoiceListening() {
+    if (isListening) stopVoiceListening()
+    else startVoiceListening()
+  }
+
+  function startAllStepTimers() {
+    if (!cookingTimersEl) return
+    cookingTimersEl.querySelectorAll('.cooking-timer').forEach(btn => {
+      if (!btn.disabled && !btn.classList.contains('timer-running')) {
+        btn.click()
+      }
+    })
+  }
+
+  function toggleFullscreen() {
+    const docEl = document.documentElement
+    try {
+      if (!document.fullscreenElement) {
+        docEl.requestFullscreen()
+      } else {
+        document.exitFullscreen()
+      }
+    } catch (e) {
+      showToast('Fullscreen not available')
+      console.error('[cookster] fullscreen error:', e)
+    }
+  }
+
+  function updateFullscreenIcon() {
+    if (!cookingFullscreen) return
+    const isFullscreen = !!document.fullscreenElement
+    cookingFullscreen.textContent = isFullscreen ? '⛶' : '⛶'
+    cookingFullscreen.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen')
+    cookingFullscreen.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen')
+    cookingFullscreen.classList.toggle('fullscreen-active', isFullscreen)
+  }
+
+  function resetStepTimers() {
+    activeTimers.forEach(t => clearInterval(t.interval))
+    activeTimers.clear()
+    renderCookingTimers()
+  }
+
+  function renderCookingTimers() {
+    if (!cookingTimersEl) return
+    const times = parseStepTimes(cookingSteps[cookingIndex])
+    if (!times.length) {
+      cookingTimersEl.innerHTML = ''
+      return
+    }
+    const seen = new Set()
+    const unique = times.filter(t => {
+      const key = t.value + '-' + t.unit
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    cookingTimersEl.innerHTML = `
+      <div class="cooking-timers-label">⏱ Timers for this step</div>
+      <div class="cooking-timers-list">
+        ${unique.map(t => `<button class="btn secondary cooking-timer" data-seconds="${t.seconds}" data-label="${escapeHtml(t.original)}">Start ${escapeHtml(t.original)}</button>`).join('')}
+      </div>
+    `
+    cookingTimersEl.querySelectorAll('.cooking-timer').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const seconds = parseInt(btn.dataset.seconds, 10)
+        startTimer(seconds, btn.dataset.label, btn)
+      })
+    })
+  }
     const times = []
     // Match patterns like "25 minutes", "1 hour", "1 hour 30 minutes", "30 min", "2 hr"
     const pattern = /(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|hr?s?|hours?)/gi
@@ -449,32 +661,7 @@
     // Clear previous timers when changing steps.
     activeTimers.forEach(t => clearInterval(t.interval))
     activeTimers.clear()
-
-    if (!cookingTimersEl) return
-    const times = parseStepTimes(cookingSteps[cookingIndex])
-    if (!times.length) {
-      cookingTimersEl.innerHTML = ''
-      return
-    }
-    const seen = new Set()
-    const unique = times.filter(t => {
-      const key = t.value + '-' + t.unit
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    cookingTimersEl.innerHTML = `
-      <div class="cooking-timers-label">⏱ Timers for this step</div>
-      <div class="cooking-timers-list">
-        ${unique.map(t => `<button class="btn secondary cooking-timer" data-seconds="${t.seconds}" data-label="${escapeHtml(t.original)}">Start ${escapeHtml(t.original)}</button>`).join('')}
-      </div>
-    `
-    cookingTimersEl.querySelectorAll('.cooking-timer').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const seconds = parseInt(btn.dataset.seconds, 10)
-        startTimer(seconds, btn.dataset.label, btn)
-      })
-    })
+    renderCookingTimers()
   }
 
   if (startCookingBtn) startCookingBtn.addEventListener('click', initCooking)
@@ -488,6 +675,24 @@
     if (!window.speechSynthesis) cookingReadBtn.style.display = 'none'
     cookingReadBtn.addEventListener('click', toggleSpeech)
   }
+  if (cookingRepeat) {
+    if (!window.speechSynthesis) cookingRepeat.style.display = 'none'
+    cookingRepeat.addEventListener('click', readCurrentStep)
+  }
+  if (cookingResetTimers) cookingResetTimers.addEventListener('click', resetStepTimers)
+  if (cookingVoice) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      cookingVoice.style.display = 'none'
+    } else {
+      cookingVoice.addEventListener('click', toggleVoiceListening)
+    }
+  }
+  if (cookingFullscreen) {
+    cookingFullscreen.addEventListener('click', toggleFullscreen)
+    updateFullscreenIcon()
+  }
+  document.addEventListener('fullscreenchange', updateFullscreenIcon)
   document.addEventListener('keydown', (e) => {
     if (!cookingOverlay || !cookingOverlay.classList.contains('open')) return
     if (e.key === 'Escape') closeCooking()
