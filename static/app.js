@@ -26,6 +26,8 @@
   const dedupeShoppingBtn = document.getElementById('dedupe-shopping')
   const uncheckAllShoppingBtn = document.getElementById('uncheck-all-shopping')
   const clearAllShoppingBtn = document.getElementById('clear-all-shopping')
+  const copyShoppingBtn = document.getElementById('copy-shopping')
+  const groupShoppingBtn = document.getElementById('group-shopping')
   const addMealPlanShopping3Btn = document.getElementById('add-meal-plan-shopping-3')
   const addMealPlanShopping7Btn = document.getElementById('add-meal-plan-shopping-7')
   const mealPlanEl = document.getElementById('meal-plan')
@@ -69,6 +71,23 @@
   let activeListId = null
   let activeSuggestion = -1
   const limit = 50
+  const SHOPPING_GROUPED_KEY = 'cookster_shopping_grouped'
+  let shoppingGrouped = false
+  try {
+    shoppingGrouped = localStorage.getItem(SHOPPING_GROUPED_KEY) === 'true'
+  } catch (e) {}
+
+  // Simple keyword-based aisle categorisation for the shopping list.
+  const AISLE_KEYWORDS = {
+    Produce: ['apple', 'tomato', 'lettuce', 'onion', 'garlic', 'carrot', 'potato', 'lemon', 'lime', 'banana', 'orange', 'strawberry', 'blueberry', 'spinach', 'kale', 'broccoli', 'cauliflower', 'pepper', 'cucumber', 'avocado', 'mushroom', 'ginger', 'basil', 'parsley', 'cilantro', 'mint', 'herb', 'coriander', 'scallion', 'spring onion', 'green onion', 'zucchini', 'courgette', 'aubergine', 'eggplant', 'squash', 'pumpkin', 'beetroot', 'radish', 'celery', 'asparagus', 'peas', 'beans', 'sweetcorn', 'corn', 'pear', 'peach', 'plum', 'grape', 'melon', 'watermelon', 'mango', 'pineapple', 'kiwi', 'passion fruit', 'rhubarb', 'apricot', 'cherry', 'date', 'fig', 'pomegranate'],
+    Meat: ['chicken', 'beef', 'pork', 'lamb', 'turkey', 'sausage', 'bacon', 'ham', 'mince', 'steak', 'veal', 'duck', 'goose', 'rabbit', 'venison', 'meatball', 'burger', 'kebab', 'salami', 'chorizo', 'prosciutto', 'parma ham'],
+    Seafood: ['fish', 'salmon', 'tuna', 'prawn', 'shrimp', 'cod', 'haddock', 'halibut', 'mackerel', 'sardine', 'anchovy', 'sea bass', 'bass', 'scallop', 'mussel', 'clam', 'oyster', 'crab', 'lobster', 'squid', 'octopus', 'crayfish', 'langoustine'],
+    Dairy: ['egg', 'eggs', 'milk', 'cheese', 'butter', 'cream', 'yogurt', 'yoghurt', 'cheddar', 'mozzarella', 'parmesan', 'feta', 'ricotta', 'gouda', 'brie', 'camembert', 'goat cheese', 'halloumi', 'mascarpone', 'creme fraiche', 'sour cream', 'double cream', 'single cream', 'custard', 'fromage frais', 'quark'],
+    Pantry: ['flour', 'sugar', 'rice', 'pasta', 'noodle', 'bread', 'oil', 'olive oil', 'vinegar', 'soy sauce', 'salt', 'pepper', 'spice', 'honey', 'maple syrup', 'baking powder', 'baking soda', 'yeast', 'stock', 'broth', 'canned', 'tin', 'tomato paste', 'ketchup', 'mustard', 'mayo', 'mayonnaise', 'jam', 'peanut butter', 'cereal', 'oats', 'lentil', 'bean', 'chickpea', 'couscous', 'quinoa', 'polenta', 'semolina', 'breadcrumb', 'crouton', 'nori', 'sesame seed', 'nut', 'almond', 'walnut', 'cashew', 'pecan', 'hazelnut', 'pistachio', 'raisin', 'sultana', 'currant', 'coconut', 'cocoa', 'chocolate', 'vanilla', 'cinnamon', 'nutmeg', 'ginger', 'clove', 'turmeric', 'cumin', 'coriander', 'paprika', 'chilli', 'oregano', 'thyme', 'rosemary', 'sage', 'bay leaf', 'saffron', 'caper', 'olive', 'pickle', 'anchovy', 'sardine', 'tuna', 'soup', 'sauce', 'gravy', 'marinade', 'dressing', 'worcestershire', 'harissa', 'gochujang', 'miso', 'tahini', 'hummus', 'salsa', 'relish', 'chutney', 'bbq sauce', 'soy', 'fish sauce', 'oyster sauce', 'hoisin', 'sriracha', 'tabasco', 'vanilla extract', 'almond extract', 'rose water', 'orange blossom', 'coconut milk', 'coconut cream', 'evaporated milk', 'condensed milk', 'polenta', 'cornmeal', 'cornflour', 'arrowroot', 'custard powder', 'gelatine', 'gelatin', 'agar', 'yeast', 'dried', 'sun-dried'],
+    Frozen: ['frozen', 'ice cream', 'pastry', 'puff pastry', 'shortcrust', 'phyllo', 'filo', 'peas', 'chips', 'fries', 'frozen veg', 'frozen vegetable', 'frozen fruit', 'frozen berry', 'pizza', 'garlic bread'],
+    Drinks: ['water', 'juice', 'coffee', 'tea', 'wine', 'beer', 'soda', 'soft drink', 'sparkling water', 'tonic', 'cordial', 'milkshake', 'smoothie', 'cocktail', 'spirits', 'whisky', 'whiskey', 'vodka', 'rum', 'gin', 'brandy', 'cider', 'prosecco', 'champagne', 'cognac']
+  }
+
   const filterChipsEl = document.getElementById('filter-chips')
   const activeFiltersEl = document.getElementById('active-filters')
   const savedSearchesEl = document.getElementById('saved-searches')
@@ -1014,25 +1033,83 @@
     renderStats()
   }
 
-  function renderShoppingList() {
-    const items = Lists.getShoppingItems()
-    if (!shoppingListEl) return
-    if (!items.length) {
-      shoppingListEl.innerHTML = ''
-      shoppingEmptyEl.style.display = ''
-      clearBoughtBtn.style.display = 'none'
-      return
+  // Shopping list helpers --------------------------------------------------
+  function categorizeAisle(text) {
+    const lower = text.toLowerCase()
+    for (const category of Object.keys(AISLE_KEYWORDS)) {
+      if (AISLE_KEYWORDS[category].some(keyword => lower.includes(keyword))) {
+        return category
+      }
     }
-    shoppingEmptyEl.style.display = 'none'
-    clearBoughtBtn.style.display = ''
-    shoppingListEl.innerHTML = items.map(item => `
+    return 'Other'
+  }
+
+  function groupShoppingByAisle(items) {
+    const groups = { Other: [] }
+    for (const category of Object.keys(AISLE_KEYWORDS)) {
+      groups[category] = []
+    }
+    items.forEach(item => {
+      groups[categorizeAisle(item.text)].push(item)
+    })
+    const ordered = {}
+    for (const category of Object.keys(AISLE_KEYWORDS)) {
+      if (groups[category].length) ordered[category] = groups[category]
+    }
+    if (groups.Other.length) ordered.Other = groups.Other
+    return ordered
+  }
+
+  function formatShoppingListPlainText(items) {
+    const lines = items.map(item => `[${item.checked ? 'x' : ' '}] ${item.text}`)
+    return ['Shopping list', ...lines].join('\n')
+  }
+
+  function downloadShoppingList(text) {
+    const blob = new Blob([text], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'shopping-list.txt'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  function copyShoppingList() {
+    const items = Lists.getShoppingItems()
+    const text = formatShoppingListPlainText(items)
+    navigator.clipboard.writeText(text)
+      .then(() => showToast('Shopping list copied'))
+      .catch(() => {
+        downloadShoppingList(text)
+        showToast('Shopping list downloaded')
+      })
+  }
+
+  function shoppingItemHtml(item) {
+    return `
       <label class="shopping-item ${item.checked ? 'checked' : ''}">
         <input type="checkbox" data-id="${item.id}" ${item.checked ? 'checked' : ''}>
         <span class="shopping-text">${escapeHtml(item.text)}${item.source ? ` <span class="shopping-source">(${escapeHtml(item.source)})</span>` : ''}</span>
         <button class="shopping-delete" data-id="${item.id}" aria-label="Remove">✕</button>
       </label>
-    `).join('')
+    `
+  }
 
+  function updateShoppingHeaderButtons() {
+    if (copyShoppingBtn) {
+      copyShoppingBtn.style.display = Lists.getShoppingItems().length ? '' : 'none'
+    }
+    if (groupShoppingBtn) {
+      groupShoppingBtn.style.display = Lists.getShoppingItems().length ? '' : 'none'
+      groupShoppingBtn.textContent = shoppingGrouped ? 'Flat' : 'Group'
+      groupShoppingBtn.title = shoppingGrouped ? 'Show flat list' : 'Group by aisle'
+    }
+  }
+
+  function bindShoppingItems() {
     shoppingListEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.addEventListener('change', () => Lists.toggleShoppingItem(cb.dataset.id))
     })
@@ -1042,6 +1119,85 @@
         Lists.removeShoppingItem(btn.dataset.id)
       })
     })
+  }
+
+  function renderShoppingList() {
+    const items = Lists.getShoppingItems()
+    if (!shoppingListEl) return
+    updateShoppingHeaderButtons()
+    if (!items.length) {
+      shoppingListEl.innerHTML = ''
+      shoppingEmptyEl.style.display = ''
+      clearBoughtBtn.style.display = 'none'
+      return
+    }
+    shoppingEmptyEl.style.display = 'none'
+    clearBoughtBtn.style.display = ''
+
+    if (shoppingGrouped) {
+      const groups = groupShoppingByAisle(items)
+      shoppingListEl.innerHTML = Object.entries(groups).map(([category, catItems]) => `
+        <div class="shopping-group">
+          <h4 class="shopping-category">${escapeHtml(category)}</h4>
+          ${catItems.map(shoppingItemHtml).join('')}
+        </div>
+      `).join('')
+    } else {
+      shoppingListEl.innerHTML = items.map(shoppingItemHtml).join('')
+    }
+
+    bindShoppingItems()
+  }
+
+  // Meal plan drag-and-drop --------------------------------------------------
+  let draggedMeal = null
+
+  function handleMealDragStart(e) {
+    draggedMeal = this
+    this.classList.add('dragging')
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      sourceDate: this.dataset.date,
+      id: this.dataset.id
+    }))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  function handleMealDragEnd() {
+    this.classList.remove('dragging')
+    draggedMeal = null
+    mealPlanEl.querySelectorAll('.day-card').forEach(card => card.classList.remove('drag-over'))
+  }
+
+  function handleDayDragOver(e) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    this.classList.add('drag-over')
+  }
+
+  function handleDayDragLeave(e) {
+    if (!this.contains(e.relatedTarget)) {
+      this.classList.remove('drag-over')
+    }
+  }
+
+  async function handleDayDrop(e) {
+    e.preventDefault()
+    this.classList.remove('drag-over')
+    const raw = e.dataTransfer.getData('application/json')
+    if (!raw) return
+    let data
+    try {
+      data = JSON.parse(raw)
+    } catch (err) {
+      return
+    }
+    const { sourceDate, id } = data
+    const targetDate = this.dataset.date
+    if (!sourceDate || !id || !targetDate || sourceDate === targetDate) return
+    Lists.removeMeal(sourceDate, id)
+    Lists.addMeal(targetDate, id)
+    showToast('Meal moved')
+    await renderMealPlan()
   }
 
   async function renderMealPlan() {
@@ -1073,13 +1229,13 @@
         ${dates.map(date => {
           const ids = plan[date] || []
           const items = ids.map(id => `
-            <div class="meal-item">
-              <a class="meal-title" href="/recipe/${id}">${escapeHtml(titles.get(id) || 'Recipe')}</a>
-              <button class="meal-remove" data-date="${date}" data-id="${id}" aria-label="Remove">✕</button>
+            <div class="meal-item" draggable="true" data-date="${date}" data-id="${id}">
+              <a class="meal-title" href="/recipe/${id}" draggable="false">${escapeHtml(titles.get(id) || 'Recipe')}</a>
+              <button class="meal-remove" data-date="${date}" data-id="${id}" aria-label="Remove" draggable="false">✕</button>
             </div>
           `).join('')
           return `
-            <div class="day-card">
+            <div class="day-card" data-date="${date}">
               <div class="day-card-header">
                 <span class="day-name">${formatDateLabel(date)}</span>
               </div>
@@ -1094,6 +1250,15 @@
 
     mealPlanEl.querySelectorAll('.meal-remove').forEach(btn => {
       btn.addEventListener('click', () => Lists.removeMeal(btn.dataset.date, btn.dataset.id))
+    })
+    mealPlanEl.querySelectorAll('.meal-item').forEach(item => {
+      item.addEventListener('dragstart', handleMealDragStart)
+      item.addEventListener('dragend', handleMealDragEnd)
+    })
+    mealPlanEl.querySelectorAll('.day-card').forEach(card => {
+      card.addEventListener('dragover', handleDayDragOver)
+      card.addEventListener('dragleave', handleDayDragLeave)
+      card.addEventListener('drop', handleDayDrop)
     })
   }
 
@@ -1218,6 +1383,19 @@
 
   if (clearBoughtBtn) {
     clearBoughtBtn.addEventListener('click', () => Lists.clearBought())
+  }
+  if (copyShoppingBtn) {
+    copyShoppingBtn.addEventListener('click', copyShoppingList)
+  }
+  if (groupShoppingBtn) {
+    groupShoppingBtn.addEventListener('click', () => {
+      shoppingGrouped = !shoppingGrouped
+      try {
+        localStorage.setItem(SHOPPING_GROUPED_KEY, String(shoppingGrouped))
+      } catch (e) {}
+      updateShoppingHeaderButtons()
+      renderShoppingList()
+    })
   }
   if (dedupeShoppingBtn) {
     dedupeShoppingBtn.addEventListener('click', () => {

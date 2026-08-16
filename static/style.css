@@ -1635,6 +1635,50 @@ header.top {
 .meal-remove:hover { background: var(--accent-soft); color: var(--accent); }
 .meal-empty { color: var(--text-secondary); font-size: 0.85rem; font-style: italic; }
 
+.meal-item {
+  cursor: grab;
+}
+.meal-item:active {
+  cursor: grabbing;
+}
+.meal-item.dragging {
+  opacity: 0.6;
+  box-shadow: var(--shadow-lg);
+  transform: scale(1.02);
+}
+.meal-item .meal-title,
+.meal-item .meal-remove {
+  pointer-events: auto;
+}
+.day-card.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Shopping list export / grouping */
+.shopping-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shopping-group {
+  margin-bottom: 18px;
+}
+.shopping-group:last-child {
+  margin-bottom: 0;
+}
+.shopping-category {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
 /* Backup */
 .backup-actions {
   display: flex;
