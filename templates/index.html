@@ -49,12 +49,23 @@
             <option value="">All books</option>
           </select>
         </div>
+        <div class="search-sort">
+          <select id="sort" aria-label="Sort results">
+            <option value="relevance">Relevance</option>
+            <option value="az">A–Z</option>
+            <option value="recent">Recently added</option>
+            <option value="random">Random</option>
+          </select>
+        </div>
+        <button id="save-search" class="btn secondary save-search-btn" title="Save this search" disabled>💾 Save</button>
         <a href="/books" class="btn secondary browse-books-btn">📚 Browse books</a>
         <button id="random" class="btn secondary surprise-btn">🎲 Surprise me</button>
         <div class="stats-badge" title="Indexed cookbooks">
           <span id="book-count-inline">0</span> books
         </div>
       </div>
+
+      <div id="saved-searches" class="saved-searches" aria-label="Saved searches"></div>
 
       <div class="filter-chips" id="filter-chips" aria-label="Recipe filters">
         <button class="filter-chip" data-filter="vegetarian" aria-pressed="false">🥬 Vegetarian</button>
@@ -94,6 +105,7 @@
       </div>
       <nav class="lists-tabs" role="tablist">
         <button class="lists-tab active" data-tab="lists" role="tab" aria-selected="true">Lists</button>
+        <button class="lists-tab" data-tab="pantry" role="tab" aria-selected="false">🥫 Pantry</button>
         <button class="lists-tab" data-tab="shopping" role="tab" aria-selected="false">Shopping</button>
         <button class="lists-tab" data-tab="mealplan" role="tab" aria-selected="false">Meal Plan</button>
         <button class="lists-tab" data-tab="backup" role="tab" aria-selected="false">Backup</button>
@@ -117,6 +129,21 @@
               <input type="text" id="new-list-name" placeholder="New list name" autocomplete="off" />
               <button type="submit">Add</button>
             </form>
+          </section>
+        </div>
+
+        <div class="tab-panel" data-tab="pantry">
+          <section class="list-section">
+            <h3>Pantry / “What’s in my fridge”</h3>
+            <div class="pantry-form">
+              <input type="text" id="pantry-input" placeholder="e.g. eggs, basil…" autocomplete="off">
+              <button id="add-pantry" class="btn">Add</button>
+            </div>
+            <div id="pantry-list"></div>
+            <label class="pantry-boost">
+              <input type="checkbox" id="pantry-boost">
+              <span>Boost recipes using my pantry</span>
+            </label>
           </section>
         </div>
 

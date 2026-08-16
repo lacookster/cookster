@@ -16,6 +16,20 @@
   const markCookedBtn = document.getElementById('mark-cooked')
   const cookedDateEl = document.getElementById('cooked-date')
   const notesInput = document.getElementById('recipe-notes')
+  const substitutionInput = document.getElementById('recipe-substitution')
+  const saveSubstitutionBtn = document.getElementById('save-substitution')
+  const removeSubstitutionBtn = document.getElementById('remove-substitution')
+  const savedSubstitutionEl = document.getElementById('saved-substitution')
+  const videoInput = document.getElementById('recipe-video')
+  const saveVideoBtn = document.getElementById('save-video')
+  const watchVideoLink = document.getElementById('watch-video')
+  const removeVideoBtn = document.getElementById('remove-video')
+  const videoActions = document.getElementById('video-actions')
+  const lightbox = document.getElementById('lightbox')
+  const lightboxImg = document.getElementById('lightbox-img')
+  const lightboxClose = document.getElementById('lightbox-close')
+  const heroImg = document.querySelector('.recipe-hero-media img')
+  const INGREDIENT_CHECKS_KEY = 'cookster_ingredient_checks'
 
   if (backLink && document.referrer && new URL(document.referrer).origin === location.origin) {
     backLink.href = document.referrer
@@ -286,9 +300,12 @@
     if (!ingredientListEl || !scaleInput) return
     const factor = parseFloat(scaleInput.value) || 1
     ingredientListEl.querySelectorAll('li').forEach(li => {
-      const original = li.dataset.original || li.textContent
+      const span = li.querySelector('.ingredient-check span')
+      const original = li.dataset.original || (span ? span.textContent : li.textContent)
       if (!li.dataset.original) li.dataset.original = original
-      li.textContent = scaleLine(original, factor)
+      const scaled = scaleLine(original, factor)
+      if (span) span.textContent = scaled
+      else li.textContent = scaled
     })
   }
 
@@ -316,6 +333,7 @@
   const cookingStepNum = document.getElementById('cooking-step-num')
   const cookingStepTotal = document.getElementById('cooking-step-total')
   const cookingTimersEl = document.getElementById('cooking-timers')
+  const cookingReadBtn = document.getElementById('cooking-read')
 
   let cookingSteps = []
   let cookingIndex = 0
@@ -335,9 +353,28 @@
 
   function closeCooking() {
     if (!cookingOverlay) return
+    stopSpeech()
     cookingOverlay.classList.remove('open')
     cookingOverlay.setAttribute('aria-hidden', 'true')
     document.body.style.overflow = ''
+  }
+
+  function stopSpeech() {
+    try {
+      if (window.speechSynthesis) window.speechSynthesis.cancel()
+    } catch (e) {}
+  }
+
+  function toggleSpeech() {
+    if (!window.speechSynthesis || !cookingSteps.length) return
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+      window.speechSynthesis.cancel()
+      return
+    }
+    const text = cookingSteps[cookingIndex]
+    if (!text) return
+    const utterance = new SpeechSynthesisUtterance(text)
+    window.speechSynthesis.speak(utterance)
   }
 
   function parseStepTimes(text) {
@@ -402,6 +439,7 @@
   }
 
   function renderCookingStep() {
+    stopSpeech()
     cookingStepNum.textContent = cookingIndex + 1
     cookingStepText.textContent = cookingSteps[cookingIndex]
     cookingPrev.disabled = cookingIndex === 0
@@ -445,11 +483,16 @@
   if (cookingOverlay) {
     cookingOverlay.addEventListener('click', (e) => { if (e.target === cookingOverlay) closeCooking() })
   }
+  if (cookingReadBtn) {
+    if (!window.speechSynthesis) cookingReadBtn.style.display = 'none'
+    cookingReadBtn.addEventListener('click', toggleSpeech)
+  }
   document.addEventListener('keydown', (e) => {
     if (!cookingOverlay || !cookingOverlay.classList.contains('open')) return
     if (e.key === 'Escape') closeCooking()
     if (e.key === 'ArrowRight') cookingNext.click()
     if (e.key === 'ArrowLeft') cookingPrev.click()
+    if (e.key === 'r' || e.key === 'R') toggleSpeech()
   })
 
   // Copy link and export ---------------------------------------------------
@@ -494,9 +537,135 @@
     })
   }
 
+  // Ingredient checkboxes --------------------------------------------------
+  function loadIngredientChecks() {
+    try {
+      const map = JSON.parse(localStorage.getItem(INGREDIENT_CHECKS_KEY) || '{}')
+      return Array.isArray(map[recipeId]) ? map[recipeId] : []
+    } catch (e) {
+      return []
+    }
+  }
+  function saveIngredientChecks(indices) {
+    try {
+      const map = JSON.parse(localStorage.getItem(INGREDIENT_CHECKS_KEY) || '{}')
+      map[recipeId] = indices
+      localStorage.setItem(INGREDIENT_CHECKS_KEY, JSON.stringify(map))
+    } catch (e) {}
+  }
+  function initIngredientChecks() {
+    const checked = loadIngredientChecks()
+    document.querySelectorAll('.ingredient-check input[type="checkbox"]').forEach(cb => {
+      const idx = cb.dataset.index
+      const isChecked = checked.includes(idx)
+      cb.checked = isChecked
+      cb.closest('.ingredient-check').classList.toggle('checked', isChecked)
+      cb.addEventListener('change', () => {
+        const all = Array.from(document.querySelectorAll('.ingredient-check input[type="checkbox"]'))
+        const indices = all.filter(c => c.checked).map(c => c.dataset.index)
+        saveIngredientChecks(indices)
+        cb.closest('.ingredient-check').classList.toggle('checked', cb.checked)
+      })
+    })
+  }
+
+  // Lightbox ---------------------------------------------------------------
+  function openLightbox() {
+    if (!lightbox || !lightboxImg || !heroImg) return
+    lightboxImg.src = heroImg.src
+    lightbox.classList.add('open')
+    lightbox.setAttribute('aria-hidden', 'false')
+  }
+  function closeLightbox() {
+    if (!lightbox) return
+    lightbox.classList.remove('open')
+    lightbox.setAttribute('aria-hidden', 'true')
+  }
+  if (heroImg) {
+    heroImg.style.cursor = 'zoom-in'
+    heroImg.addEventListener('click', openLightbox)
+  }
+  if (lightbox) {
+    lightbox.addEventListener('click', (e) => { if (e.target === lightbox || e.target === lightboxImg) closeLightbox() })
+  }
+  if (lightboxClose) lightboxClose.addEventListener('click', closeLightbox)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lightbox && lightbox.classList.contains('open')) closeLightbox()
+  })
+
+  // Substitutions & tweaks -------------------------------------------------
+  function renderSubstitution() {
+    const saved = Lists.getSubstitution(recipeId)
+    if (!savedSubstitutionEl) return
+    savedSubstitutionEl.textContent = saved
+    savedSubstitutionEl.style.display = saved ? 'block' : 'none'
+  }
+  function saveSubstitution() {
+    if (!substitutionInput) return
+    Lists.setSubstitution(recipeId, substitutionInput.value)
+    renderSubstitution()
+  }
+  if (substitutionInput) {
+    substitutionInput.value = Lists.getSubstitution(recipeId)
+    let subTimer = null
+    substitutionInput.addEventListener('input', () => {
+      clearTimeout(subTimer)
+      subTimer = setTimeout(saveSubstitution, 400)
+    })
+    substitutionInput.addEventListener('blur', saveSubstitution)
+  }
+  if (saveSubstitutionBtn) saveSubstitutionBtn.addEventListener('click', saveSubstitution)
+  if (removeSubstitutionBtn) {
+    removeSubstitutionBtn.addEventListener('click', () => {
+      if (substitutionInput) substitutionInput.value = ''
+      Lists.setSubstitution(recipeId, '')
+      renderSubstitution()
+    })
+  }
+
+  // Video links --------------------------------------------------------------
+  function isValidUrl(url) {
+    return /^https?:\/\//i.test((url || '').trim())
+  }
+  function renderVideo(url) {
+    if (!videoActions || !watchVideoLink) return
+    if (url && isValidUrl(url)) {
+      watchVideoLink.href = url
+      videoActions.style.display = ''
+    } else {
+      videoActions.style.display = 'none'
+    }
+  }
+  function saveVideo() {
+    if (!videoInput) return
+    const url = videoInput.value.trim()
+    if (url && !isValidUrl(url)) {
+      showToast('Please enter a valid http(s) URL')
+      return
+    }
+    Lists.setVideoLink(recipeId, url)
+    renderVideo(url)
+    showToast(url ? 'Video link saved' : 'Video link removed')
+  }
+  if (videoInput) {
+    videoInput.value = Lists.getVideoLink(recipeId)
+    renderVideo(videoInput.value)
+  }
+  if (saveVideoBtn) saveVideoBtn.addEventListener('click', saveVideo)
+  if (videoInput) videoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveVideo() })
+  if (removeVideoBtn) {
+    removeVideoBtn.addEventListener('click', () => {
+      if (videoInput) videoInput.value = ''
+      Lists.setVideoLink(recipeId, '')
+      renderVideo('')
+    })
+  }
+
   loadRelated()
   updateFav()
   updateWant()
   renderRating()
   renderCooked()
+  renderSubstitution()
+  initIngredientChecks()
 })()

@@ -44,7 +44,9 @@
             {% endif %}
           </div>
           <div class="recipe-header">
-            <div class="recipe-meta">From <a href="/book?source={{ recipe.source|urlencode }}&db={{ request.query_params.get('db', 'cookster.db')|urlencode }}"><strong>{{ recipe.source }}</strong></a></div>
+            <div class="recipe-meta">From <a href="/book?source={{ recipe.source|urlencode }}&db={{ request.query_params.get('db', 'cookster.db')|urlencode }}"><strong>{{ recipe.source }}</strong></a>
+              <div class="recipe-source-more"><a href="/?source={{ source_raw|urlencode }}&db={{ request.query_params.get('db','cookster.db')|urlencode }}">🔎 Search more from this book</a></div>
+            </div>
             <h1>{{ recipe.title }}</h1>
             <div id="recipe-rating-display" class="recipe-rating-display"></div>
             {% if serves %}<div class="recipe-serves">🍽 {{ serves }}</div>{% endif %}
@@ -84,7 +86,12 @@
             <ul class="ingredient-list" id="ingredient-list">
               {% for line in recipe.ingredients.split('\n') %}
                 {% if line.strip() %}
-                  <li data-original="{{ line|escape }}">{{ line }}</li>
+                  <li data-original="{{ line|escape }}">
+                    <label class="ingredient-check">
+                      <input type="checkbox" data-index="{{ loop.index0 }}">
+                      <span>{{ line }}</span>
+                    </label>
+                  </li>
                 {% endif %}
               {% endfor %}
             </ul>
@@ -133,6 +140,34 @@
           </div>
         </div>
 
+        <div class="recipe-extras">
+          <div class="panel extras-panel">
+            <h2>Substitutions &amp; tweaks</h2>
+            <div class="substitution-widget">
+              <textarea id="recipe-substitution" rows="3" placeholder="Substitutions and tweaks…"></textarea>
+              <div class="substitution-actions">
+                <button id="save-substitution" class="btn">Save</button>
+                <button id="remove-substitution" class="btn danger">Remove</button>
+              </div>
+              <div id="saved-substitution" class="saved-substitution"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="recipe-extras">
+          <div class="panel extras-panel">
+            <h2>Video</h2>
+            <div class="video-widget">
+              <input type="url" id="recipe-video" placeholder="https://example.com/video">
+              <button id="save-video" class="btn">Save</button>
+            </div>
+            <div id="video-actions" class="video-actions" style="display:none">
+              <a id="watch-video" class="video-link" href="#" target="_blank" rel="noopener">▶ Watch video</a>
+              <button id="remove-video" class="btn danger">Remove</button>
+            </div>
+          </div>
+        </div>
+
         <div class="related-recipes">
           <section id="related-same-book" class="related-section" style="display:none">
             <h2>More from this book</h2>
@@ -157,8 +192,13 @@
       </div>
       <div class="cooking-footer">
         <button id="cooking-prev" class="btn secondary">← Previous</button>
+        <button id="cooking-read" class="btn secondary">🔊 Read aloud</button>
         <button id="cooking-next" class="btn">Next →</button>
       </div>
+    </div>
+    <div id="lightbox" class="lightbox" aria-hidden="true">
+      <button id="lightbox-close" class="icon-btn" aria-label="Close image">✕</button>
+      <img id="lightbox-img" src="" alt="{{ recipe.title }}">
     </div>
     <script>
       (() => {

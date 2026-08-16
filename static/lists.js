@@ -110,11 +110,16 @@
       favorites: [],
       wantToTry: [],
       lists: [],
+      tags: [],
+      savedSearches: [],
+      pantry: [],
       shopping: { items: [] },
       mealPlan: {},
       notes: {},
       ratings: {},
       cooked: {},
+      substitutions: {},
+      videoLinks: {},
       updatedAt: 0
     }
   }
@@ -128,11 +133,16 @@
         favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
         wantToTry: Array.isArray(parsed.wantToTry) ? parsed.wantToTry : [],
         lists: Array.isArray(parsed.lists) ? parsed.lists : [],
+        tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+        savedSearches: Array.isArray(parsed.savedSearches) ? parsed.savedSearches : [],
+        pantry: Array.isArray(parsed.pantry) ? parsed.pantry : [],
         shopping: parsed.shopping && typeof parsed.shopping === 'object' ? parsed.shopping : { items: [] },
         mealPlan: parsed.mealPlan && typeof parsed.mealPlan === 'object' ? parsed.mealPlan : {},
         notes: parsed.notes && typeof parsed.notes === 'object' ? parsed.notes : {},
         ratings: parsed.ratings && typeof parsed.ratings === 'object' ? parsed.ratings : {},
         cooked: parsed.cooked && typeof parsed.cooked === 'object' ? parsed.cooked : {},
+        substitutions: parsed.substitutions && typeof parsed.substitutions === 'object' ? parsed.substitutions : {},
+        videoLinks: parsed.videoLinks && typeof parsed.videoLinks === 'object' ? parsed.videoLinks : {},
         updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0
       }
     } catch (e) {
@@ -220,11 +230,16 @@
     return data.favorites.length > 0 ||
       data.wantToTry.length > 0 ||
       data.lists.length > 0 ||
+      data.tags.length > 0 ||
+      data.savedSearches.length > 0 ||
+      data.pantry.length > 0 ||
       (data.shopping && data.shopping.items && data.shopping.items.length > 0) ||
       Object.keys(data.mealPlan || {}).length > 0 ||
       Object.keys(data.notes || {}).length > 0 ||
       Object.keys(data.ratings || {}).length > 0 ||
-      Object.keys(data.cooked || {}).length > 0
+      Object.keys(data.cooked || {}).length > 0 ||
+      Object.keys(data.substitutions || {}).length > 0 ||
+      Object.keys(data.videoLinks || {}).length > 0
   }
 
   function resolveAndStore(serverPayload) {
@@ -306,6 +321,60 @@
 
     getWantToTry() {
       return load().wantToTry
+    },
+
+    // Saved searches ---------------------------------------------------------
+    saveSearch(name, q, filters, source, sort) {
+      const trimmed = (name || '').trim()
+      if (!trimmed) return null
+      const data = load()
+      const existing = data.savedSearches.findIndex(s => s.q === q && s.filters === filters && s.source === source && s.sort === sort)
+      const search = {
+        id: uuid(),
+        label: trimmed,
+        q: q || '',
+        filters: filters || '',
+        source: source || '',
+        sort: sort || 'relevance',
+        createdAt: Date.now()
+      }
+      if (existing !== -1) data.savedSearches[existing] = search
+      else data.savedSearches.push(search)
+      save(data)
+      return search
+    },
+
+    getSavedSearches() {
+      return load().savedSearches
+    },
+
+    deleteSavedSearch(id) {
+      const data = load()
+      data.savedSearches = data.savedSearches.filter(s => s.id !== id)
+      save(data)
+    },
+
+    // Pantry -----------------------------------------------------------------
+    getPantry() {
+      return load().pantry
+    },
+
+    addPantryItem(text) {
+      const trimmed = (text || '').trim().toLowerCase()
+      if (!trimmed) return false
+      const data = load()
+      if (!data.pantry.includes(trimmed)) {
+        data.pantry.push(trimmed)
+        save(data)
+      }
+      return true
+    },
+
+    removePantryItem(text) {
+      const target = (text || '').trim().toLowerCase()
+      const data = load()
+      data.pantry = data.pantry.filter(item => item !== target)
+      save(data)
     },
 
     createList(name) {
@@ -611,6 +680,30 @@
       return load().cooked[normalizeId(recipeId)] || null
     },
 
+    setSubstitution(recipeId, text) {
+      recipeId = normalizeId(recipeId)
+      const data = load()
+      if (!text || !String(text).trim()) delete data.substitutions[recipeId]
+      else data.substitutions[recipeId] = String(text).trim()
+      save(data)
+    },
+
+    getSubstitution(recipeId) {
+      return load().substitutions[normalizeId(recipeId)] || ''
+    },
+
+    setVideoLink(recipeId, url) {
+      recipeId = normalizeId(recipeId)
+      const data = load()
+      if (!url || !String(url).trim()) delete data.videoLinks[recipeId]
+      else data.videoLinks[recipeId] = String(url).trim()
+      save(data)
+    },
+
+    getVideoLink(recipeId) {
+      return load().videoLinks[normalizeId(recipeId)] || ''
+    },
+
     // Backup / import ------------------------------------------------------
     exportAll() {
       return load()
@@ -628,11 +721,16 @@
         favorites: Array.isArray(data.favorites) ? data.favorites : [],
         wantToTry: Array.isArray(data.wantToTry) ? data.wantToTry : [],
         lists: Array.isArray(data.lists) ? data.lists : [],
+        tags: Array.isArray(data.tags) ? data.tags : [],
+        savedSearches: Array.isArray(data.savedSearches) ? data.savedSearches : [],
+        pantry: Array.isArray(data.pantry) ? data.pantry : [],
         shopping: data.shopping && typeof data.shopping === 'object' ? data.shopping : { items: [] },
         mealPlan: data.mealPlan && typeof data.mealPlan === 'object' ? data.mealPlan : {},
         notes: data.notes && typeof data.notes === 'object' ? data.notes : {},
         ratings: data.ratings && typeof data.ratings === 'object' ? data.ratings : {},
         cooked: data.cooked && typeof data.cooked === 'object' ? data.cooked : {},
+        substitutions: data.substitutions && typeof data.substitutions === 'object' ? data.substitutions : {},
+        videoLinks: data.videoLinks && typeof data.videoLinks === 'object' ? data.videoLinks : {},
         updatedAt: Date.now()
       }
       save(merged)

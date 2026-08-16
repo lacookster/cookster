@@ -2,6 +2,7 @@
   const Lists = window.CooksterLists
   const qInput = document.getElementById('q')
   const sourceSelect = document.getElementById('source')
+  const sortSelect = document.getElementById('sort')
   const busy = document.getElementById('busy')
   const resultsEl = document.getElementById('results')
   const countEl = document.getElementById('count')
@@ -38,6 +39,10 @@
   const importRecoveryBtn = document.getElementById('import-recovery-btn')
   const syncStatusEl = document.getElementById('sync-status')
   const resetServerDataBtn = document.getElementById('reset-server-data')
+  const pantryInput = document.getElementById('pantry-input')
+  const addPantryBtn = document.getElementById('add-pantry')
+  const pantryListEl = document.getElementById('pantry-list')
+  const pantryBoost = document.getElementById('pantry-boost')
 
   const suggestionsEl = document.getElementById('suggestions')
   const recentSearchesEl = document.getElementById('recent-searches')
@@ -51,7 +56,9 @@
   let suggestionTimer = null
   let lastQuery = (params.get('q') || '').trim()
   let lastSource = (params.get('source') || '').trim()
+  let currentSort = (params.get('sort') || 'relevance').trim()
   let activeFilters = new Set((params.get('filters') || '').split(',').filter(Boolean))
+  let boostPantry = (params.get('pantry') || '').trim() !== ''
   let totalResults = 0
   let currentView = 'search' // 'search' | 'list'
   let activeListId = null
@@ -59,6 +66,8 @@
   const limit = 50
   const filterChipsEl = document.getElementById('filter-chips')
   const activeFiltersEl = document.getElementById('active-filters')
+  const savedSearchesEl = document.getElementById('saved-searches')
+  const saveSearchBtn = document.getElementById('save-search')
 
   if (lastQuery) qInput.value = lastQuery
 
@@ -121,11 +130,11 @@
     }
   }
 
-  function saveRecentSearch(q, filters) {
+  function saveRecentSearch(q, filters, sort) {
     if (!q) return
     const recents = loadRecentSearches()
     const updated = recents.filter(r => r.q !== q)
-    updated.unshift({ q, filters: filters || '', source: sourceSelect ? sourceSelect.value : '', timestamp: Date.now() })
+    updated.unshift({ q, filters: filters || '', sort: sort || 'relevance', source: sourceSelect ? sourceSelect.value : '', timestamp: Date.now() })
     while (updated.length > MAX_RECENT) updated.pop()
     try {
       localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated))
@@ -147,7 +156,7 @@
       ${recents.map((r, i) => `
         <div class="recent-search-item" data-index="${i}" role="button" tabindex="0">
           <span class="recent-search-query">${escapeHtml(r.q)}</span>
-          ${r.filters ? `<span class="recent-search-filters">${escapeHtml(r.filters.replace(/,/g, ' · '))}</span>` : ''}
+          ${r.filters || r.sort && r.sort !== 'relevance' ? `<span class="recent-search-meta">${escapeHtml([r.filters, r.sort !== 'relevance' ? r.sort : ''].filter(Boolean).join(' · '))}</span>` : ''}
         </div>
       `).join('')}
     `
@@ -180,9 +189,56 @@
     qInput.value = r.q
     activeFilters = new Set((r.filters || '').split(',').filter(Boolean))
     updateFilterChips()
+    if (sortSelect) sortSelect.value = r.sort || 'relevance'
     if (sourceSelect) sourceSelect.value = r.source || ''
     closeRecentSearches()
     doSearch({ pushHistory: true })
+  }
+
+  function renderSavedSearches() {
+    if (!savedSearchesEl) return
+    const saved = Lists.getSavedSearches()
+    if (!saved.length) {
+      savedSearchesEl.innerHTML = ''
+      return
+    }
+    savedSearchesEl.innerHTML = `
+      <span class="saved-searches-label">Saved</span>
+      ${saved.map(s => `
+        <span class="saved-search-chip" data-id="${escapeHtml(s.id)}" role="button" tabindex="0">
+          <span class="saved-search-text">${escapeHtml(s.label || s.q)}${s.sort && s.sort !== 'relevance' ? ` · ${escapeHtml(s.sort)}` : ''}</span>
+          <button class="saved-search-delete" aria-label="Remove saved search">×</button>
+        </span>
+      `).join('')}
+    `
+    savedSearchesEl.querySelectorAll('.saved-search-chip').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        if (e.target.closest('.saved-search-delete')) return
+        const s = Lists.getSavedSearches().find(x => x.id === chip.dataset.id)
+        if (!s) return
+        qInput.value = s.q
+        activeFilters = new Set((s.filters || '').split(',').filter(Boolean))
+        updateFilterChips()
+        if (sortSelect) sortSelect.value = s.sort || 'relevance'
+        if (sourceSelect) sourceSelect.value = s.source || ''
+        doSearch({ pushHistory: true })
+      })
+    })
+    savedSearchesEl.querySelectorAll('.saved-search-delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const id = btn.closest('.saved-search-chip').dataset.id
+        Lists.deleteSavedSearch(id)
+      })
+    })
+    updateSaveSearchButton()
+  }
+
+  function updateSaveSearchButton() {
+    if (!saveSearchBtn) return
+    const q = qInput.value.trim()
+    const enabled = q && currentView === 'search'
+    saveSearchBtn.disabled = !enabled
   }
 
   function heartIcon(filled) {
@@ -430,6 +486,8 @@
     const q = qInput.value.trim()
     const source = sourceSelect ? sourceSelect.value : ''
     const filters = filtersQuery()
+    const sort = sortSelect ? sortSelect.value : 'relevance'
+    const pantryItems = Lists.getPantry()
     if (q && currentView === 'search') {
       url.searchParams.set('q', q)
       url.searchParams.set('page', String(page))
@@ -437,11 +495,17 @@
       else url.searchParams.delete('source')
       if (filters) url.searchParams.set('filters', filters)
       else url.searchParams.delete('filters')
+      if (sort && sort !== 'relevance') url.searchParams.set('sort', sort)
+      else url.searchParams.delete('sort')
+      if (boostPantry && pantryItems.length) url.searchParams.set('pantry', pantryItems.join(','))
+      else url.searchParams.delete('pantry')
     } else {
       url.searchParams.delete('q')
       url.searchParams.delete('page')
       url.searchParams.delete('source')
       url.searchParams.delete('filters')
+      url.searchParams.delete('sort')
+      url.searchParams.delete('pantry')
     }
     if (currentView === 'list' && activeListId) {
       url.searchParams.set('view', 'list')
@@ -451,9 +515,9 @@
       url.searchParams.delete('list')
     }
     if (push) {
-      history.pushState({ q, page, source, filters, currentView, activeListId }, '', url.toString())
+      history.pushState({ q, page, source, filters, sort, currentView, activeListId, pantry: boostPantry ? pantryItems.join(',') : '' }, '', url.toString())
     } else {
-      history.replaceState({ q, page, source, filters, currentView, activeListId }, '', url.toString())
+      history.replaceState({ q, page, source, filters, sort, currentView, activeListId, pantry: boostPantry ? pantryItems.join(',') : '' }, '', url.toString())
     }
   }
 
@@ -469,17 +533,22 @@
 
     currentView = 'search'
     activeListId = null
-    if (q !== lastQuery || source !== lastSource) {
+    const sort = sortSelect ? sortSelect.value : currentSort
+    if (q !== lastQuery || source !== lastSource || sort !== currentSort) {
       page = 1
       lastQuery = q
       lastSource = source
+      currentSort = sort
     }
 
     setBusy(true)
     try {
       const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
       const filterParam = activeFilters.size ? `&filters=${encodeURIComponent(filtersQuery())}` : ''
-      const res = await fetch(`/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}${sourceParam}${filterParam}`)
+      const sortParam = sort && sort !== 'relevance' ? `&sort=${encodeURIComponent(sort)}` : ''
+      const pantryItems = boostPantry ? Lists.getPantry() : []
+      const pantryParam = (boostPantry && pantryItems.length) ? `&pantry=${encodeURIComponent(pantryItems.join(','))}` : ''
+      const res = await fetch(`/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}${sourceParam}${filterParam}${sortParam}${pantryParam}`)
       if (!res.ok) throw new Error(`Search failed (${res.status})`)
       const data = await res.json()
       totalResults = data.total || 0
@@ -489,10 +558,21 @@
       resultsEl.innerHTML = ''
       if (!data.results || data.results.length === 0) {
         const activeFilterText = activeFilters.size ? ` with filters ${Array.from(activeFilters).map(f => f.replace(/-/g, ' ')).join(', ')}` : ''
+        let suggestionHtml = ''
+        try {
+          const corrRes = await fetch(`/api/suggest-correction?q=${encodeURIComponent(q)}`)
+          if (corrRes.ok) {
+            const corr = await corrRes.json()
+            if (corr.suggestion && corr.suggestion.toLowerCase() !== q.toLowerCase()) {
+              suggestionHtml = `<p>Did you mean <button class="text-link" id="suggestion-link">“${escapeHtml(corr.suggestion)}”</button>?</p>`
+            }
+          }
+        } catch (e) {}
         resultsEl.innerHTML = `
           <div class="empty empty-search">
             <h2>No recipes found for “${escapeHtml(q)}”${escapeHtml(activeFilterText)}</h2>
             <p>Try one of these popular searches, or remove some filters.</p>
+            ${suggestionHtml}
             <div class="empty-actions">
               <button class="empty-example" data-q="chocolate">🍫 Chocolate</button>
               <button class="empty-example" data-q="chicken">🍗 Chicken</button>
@@ -501,6 +581,14 @@
             </div>
             <button id="empty-random" class="btn secondary">🎲 Surprise me</button>
           </div>`
+        const suggestionLink = resultsEl.querySelector('#suggestion-link')
+        if (suggestionLink) {
+          suggestionLink.addEventListener('click', () => {
+            qInput.value = suggestionLink.textContent.replace(/^“/, '').replace(/”$/, '')
+            page = 1
+            doSearch({ pushHistory: true })
+          })
+        }
         resultsEl.querySelectorAll('.empty-example').forEach(btn => {
           btn.addEventListener('click', () => {
             qInput.value = btn.dataset.q
@@ -520,7 +608,8 @@
       resultsEl.innerHTML = data.results.map(renderCard).join('')
       bindCardActions()
       syncUrl(pushHistory)
-      saveRecentSearch(q, filtersQuery())
+      saveRecentSearch(q, filtersQuery(), sort)
+      updateSaveSearchButton()
       if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       console.error('[cookster] search error:', err)
@@ -757,6 +846,39 @@
     listsPanel.setAttribute('aria-hidden', 'true')
   }
 
+  function renderPantry() {
+    const items = Lists.getPantry()
+    if (!pantryListEl) return
+    if (!items.length) {
+      pantryListEl.innerHTML = '<p class="empty-lists">No pantry items yet.</p>'
+    } else {
+      pantryListEl.innerHTML = items.map(item => `
+        <div class="pantry-item">
+          <span class="pantry-text">${escapeHtml(item)}</span>
+          <button class="icon-btn pantry-delete" data-item="${escapeHtml(item)}" aria-label="Remove">✕</button>
+        </div>
+      `).join('')
+      pantryListEl.querySelectorAll('.pantry-delete').forEach(btn => {
+        btn.addEventListener('click', () => {
+          Lists.removePantryItem(btn.dataset.item)
+          renderPantry()
+          if (boostPantry && qInput.value.trim()) doSearch({ pushHistory: true })
+        })
+      })
+    }
+    if (pantryBoost) pantryBoost.disabled = !items.length
+  }
+
+  function addPantryItem() {
+    if (!pantryInput) return
+    const value = pantryInput.value.trim().toLowerCase()
+    if (!value) return
+    Lists.addPantryItem(value)
+    pantryInput.value = ''
+    renderPantry()
+    if (boostPantry && qInput.value.trim()) doSearch({ pushHistory: true })
+  }
+
   function renderListsPanel() {
     const data = Lists.load()
     if (favCountEl) favCountEl.textContent = data.favorites.length
@@ -803,6 +925,7 @@
 
     renderShoppingList()
     renderMealPlan()
+    renderPantry()
   }
 
   function renderShoppingList() {
@@ -1080,6 +1203,7 @@
     debounceSuggestions()
     if (qInput.value.trim()) closeRecentSearches()
     else renderRecentSearches()
+    updateSaveSearchButton()
   })
   qInput.addEventListener('focus', () => {
     closeSuggestions()
@@ -1121,6 +1245,17 @@
     }
   })
   document.getElementById('go').addEventListener('click', () => { closeSuggestions(); doSearch({ pushHistory: true }) })
+  if (saveSearchBtn) {
+    saveSearchBtn.addEventListener('click', () => {
+      const q = qInput.value.trim()
+      if (!q) return
+      const name = prompt('Name this saved search:', q)
+      if (!name) return
+      Lists.saveSearch(name, q, filtersQuery(), sourceSelect ? sourceSelect.value : '', sortSelect ? sortSelect.value : 'relevance')
+      renderSavedSearches()
+      showToast('Search saved')
+    })
+  }
   if (randomBtn) {
     randomBtn.addEventListener('click', async () => {
       try {
@@ -1134,6 +1269,17 @@
     })
   }
   if (sourceSelect) sourceSelect.addEventListener('change', () => { page = 1; doSearch({ pushHistory: true }) })
+  if (sortSelect) sortSelect.addEventListener('change', () => { page = 1; doSearch({ pushHistory: true }) })
+  if (addPantryBtn) addPantryBtn.addEventListener('click', addPantryItem)
+  if (pantryInput) pantryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPantryItem() } })
+  if (pantryBoost) {
+    pantryBoost.checked = boostPantry
+    pantryBoost.addEventListener('change', () => {
+      boostPantry = pantryBoost.checked
+      if (qInput.value.trim()) doSearch({ pushHistory: true })
+      else syncUrl(false)
+    })
+  }
   nextBtn.addEventListener('click', () => { if (page < totalPages()) { page++; doSearch({ pushHistory: true }) } })
   prevBtn.addEventListener('click', () => { if (page > 1) { page--; doSearch({ pushHistory: true }) } })
 
@@ -1176,6 +1322,7 @@
 
   window.addEventListener('cookster-lists-changed', () => {
     renderListsPanel()
+    renderSavedSearches()
     if (currentView === 'list') {
       if (Lists.getList(activeListId)) {
         showList(activeListId, { pushHistory: false, scroll: false })
@@ -1193,10 +1340,15 @@
     const newQ = (p.get('q') || '').trim()
     const newSource = (p.get('source') || '').trim()
     const newFilters = new Set((p.get('filters') || '').split(',').filter(Boolean))
+    const newSort = (p.get('sort') || 'relevance').trim()
+    boostPantry = (p.get('pantry') || '').trim() !== ''
+    if (pantryBoost) pantryBoost.checked = boostPantry
     const view = p.get('view')
     const listId = p.get('list')
     if (sourceSelect) sourceSelect.value = newSource
+    if (sortSelect) sortSelect.value = newSort
     activeFilters = newFilters
+    currentSort = newSort
     updateFilterChips()
     if (view === 'list' && listId) {
       page = 1
@@ -1249,10 +1401,13 @@
 
   // Initialise
   loadSources()
+  if (sortSelect) sortSelect.value = currentSort
   loadStats()
   setInterval(loadStats, 60000)
   renderListsPanel()
   updateFilterChips()
+  renderSavedSearches()
+  updateSaveSearchButton()
   const viewParam = params.get('view')
   const listParam = params.get('list')
   if (viewParam === 'list' && listParam) {

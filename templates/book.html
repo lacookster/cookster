@@ -38,6 +38,15 @@
           <p class="hero-subtitle" id="book-subtitle">Loading recipes…</p>
         </div>
 
+        <form class="book-search" action="/" method="GET">
+          <input type="hidden" name="source" value="{{ source_raw }}" />
+          <div class="search-box">
+            <span class="search-icon" aria-hidden="true">🔎</span>
+            <input name="q" placeholder="Search within this book…" autocomplete="off" />
+            <button type="submit">Search</button>
+          </div>
+        </form>
+
         <div id="results" class="results-book"></div>
         <div class="controls" id="book-controls" style="display:none">
           <button id="prev" disabled>← Previous</button>

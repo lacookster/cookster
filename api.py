@@ -634,7 +634,74 @@ def _matches_filter(candidate: dict, name: str) -> bool:
     return True
 
 
-def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None, filters: List[str] = None):
+def _levenshtein(a: str, b: str) -> int:
+    """Return the Levenshtein distance between two strings."""
+    if len(a) < len(b):
+        a, b = b, a
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            cur[j] = min(
+                cur[j - 1] + 1,
+                prev[j] + 1,
+                prev[j - 1] + (0 if ca == cb else 1)
+            )
+        prev = cur
+    return prev[-1]
+
+
+# In-memory cache of common words from the current database.
+_SPELLING_VOCAB: set = set()
+
+
+def _build_spelling_vocab(db_path: str) -> set:
+    """Build a vocabulary of words from recipe titles and ingredients."""
+    global _SPELLING_VOCAB
+    if _SPELLING_VOCAB:
+        return _SPELLING_VOCAB
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    try:
+        rows = c.execute("SELECT title, ingredients FROM recipes WHERE title IS NOT NULL OR ingredients IS NOT NULL").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+    vocab = set()
+    for title, ingredients in rows:
+        text = f"{(title or '')} {(ingredients or '')}"
+        for word in re.findall(r"[a-zA-Z']+", text.lower()):
+            if len(word) > 2:
+                vocab.add(word)
+    _SPELLING_VOCAB = vocab
+    return vocab
+
+
+def _suggest_correction(q: str, vocab: set) -> str:
+    """Suggest a corrected query if the original returns no likely matches."""
+    if not vocab or not q:
+        return ''
+    tokens = q.lower().split()
+    suggestions = []
+    for token in tokens:
+        if not token or token in vocab:
+            suggestions.append(token)
+            continue
+        best = None
+        best_score = 999
+        for word in vocab:
+            dist = _levenshtein(token, word)
+            if dist < best_score and dist <= max(1, len(token) // 3):
+                best_score = dist
+                best = word
+        suggestions.append(best or token)
+    suggestion = ' '.join(suggestions)
+    return suggestion if suggestion != q.lower() else ''
+
+
+def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None, filters: List[str] = None, sort: str = 'relevance', pantry: str = None):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     _ensure_schema(conn)
@@ -687,6 +754,26 @@ def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str 
     ranked = [c for c in ranked if _candidate_matches(c, q)]
     for f in filters:
         ranked = [c for c in ranked if _matches_filter(c, f)]
+
+    # Small pantry boost: bonus for recipes that contain pantry items as whole words.
+    pantry_items = [p.strip() for p in (pantry or '').split(',') if p.strip()] if pantry else []
+    if pantry_items and sort == 'relevance':
+        for c in ranked:
+            ing = (c.get('ingredients') or '').lower()
+            bonus = sum(0.05 for p in pantry_items if re.search(r'\b' + re.escape(p.lower()) + r'\b', ing))
+            c['score'] = (c.get('score', 0.0) or 0.0) + bonus
+        ranked.sort(key=lambda c: c['score'], reverse=True)
+
+    # apply sort order
+    sort = (sort or 'relevance').lower()
+    if sort == 'az':
+        ranked.sort(key=lambda c: (c.get('title') or '').lower())
+    elif sort == 'recent':
+        ranked.sort(key=lambda c: c.get('id', 0), reverse=True)
+    elif sort == 'random':
+        import random
+        random.shuffle(ranked)
+
     total = len(ranked)
 
     # pagination
@@ -723,7 +810,9 @@ def search(q: str = Query(..., min_length=1),
            limit: int = Query(10, ge=1, le=100),
            page: int = Query(1, ge=1, le=10000),
            source: str = Query(None),
-           filters: str = Query(None)):
+           filters: str = Query(None),
+           sort: str = Query('relevance'),
+           pantry: str = Query(None)):
     try:
         db_path = resolve_db_path(db)
     except ValueError as e:
@@ -731,8 +820,9 @@ def search(q: str = Query(..., min_length=1),
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
     filter_list = [f.strip() for f in (filters or '').split(',') if f.strip()]
-    results, total = _query_db(db_path, q, limit, page, source=source, filters=filter_list)
-    return {'query': q, 'results': results, 'page': page, 'total': total, 'source': source, 'filters': filter_list}
+    results, total = _query_db(db_path, q, limit, page, source=source, filters=filter_list, sort=sort, pantry=pantry)
+    pantry_list = [p.strip() for p in (pantry or '').split(',') if p.strip()]
+    return {'query': q, 'results': results, 'page': page, 'total': total, 'source': source, 'filters': filter_list, 'sort': sort, 'pantry': pantry_list}
 
 
 @app.get('/api/sources')
@@ -865,6 +955,7 @@ def recipe_view(request: Request, recipe_id: str, db: str = Query('cookster.db')
     conn.close()
     if not recipe:
         return templates.TemplateResponse('recipe.html', {'request': request, 'error': 'Recipe not found'})
+    source_raw = recipe['source']
     recipe['source'] = _clean_source(recipe['source'])
     image_url = _image_path_to_url(recipe.get('image', ''))
     # Determine whether method steps are already numbered so we can avoid
@@ -874,7 +965,7 @@ def recipe_view(request: Request, recipe_id: str, db: str = Query('cookster.db')
     steps_numbered = numbered > len(step_lines) // 2
 
     tmpl = templates.env.get_template('recipe.html')
-    content = tmpl.render(request=request, recipe=recipe, image_url=image_url,
+    content = tmpl.render(request=request, recipe=recipe, image_url=image_url, source_raw=source_raw,
                           steps_numbered=steps_numbered, serves=recipe.get('serves', ''))
     return HTMLResponse(content)
 
@@ -946,6 +1037,20 @@ def suggest(q: str = Query(..., min_length=1),
     rows = c.execute('SELECT title FROM recipes WHERE title LIKE ? ORDER BY title LIMIT ?', (like, limit)).fetchall()
     conn.close()
     return {'query': q, 'suggestions': [r[0] for r in rows]}
+
+
+@app.get('/api/suggest-correction')
+def suggest_correction(q: str = Query(..., min_length=1), db: str = Query('cookster.db')):
+    """Return a spelling correction suggestion for a query, or empty string."""
+    try:
+        db_path = resolve_db_path(db)
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
+    if not os.path.exists(db_path):
+        return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
+    vocab = _build_spelling_vocab(db_path)
+    suggestion = _suggest_correction(q, vocab)
+    return {'query': q, 'suggestion': suggestion}
 
 
 @app.get('/api/random')
