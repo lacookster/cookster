@@ -49,6 +49,11 @@
   const randomBtn = document.getElementById('random')
   const bookCountEl = document.getElementById('book-count')
   const bookCountInlineEl = document.getElementById('book-count-inline')
+  const voiceBtn = document.getElementById('voice-search')
+  const statsFavCountEl = document.getElementById('stats-fav-count')
+  const statsWantCountEl = document.getElementById('stats-want-count')
+  const statsCookedCountEl = document.getElementById('stats-cooked-count')
+  const statsMostCookedEl = document.getElementById('stats-most-cooked')
 
   const params = new URLSearchParams(location.search)
   let page = Math.max(1, parseInt(params.get('page'), 10) || 1)
@@ -295,6 +300,58 @@
     `
   }
 
+  function renderRecentCard(r) {
+    const imageHtml = r.image_url
+      ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
+      : `<div class="card-media"><div class="placeholder">📷 No image</div></div>`
+    return `
+      <a class="card recent-card" href="/recipe/${r.stable_id || String(r.id)}">
+        ${imageHtml}
+        <div class="card-body">
+          <div class="card-title-row">
+            <h3>${escapeHtml(r.title)}</h3>
+          </div>
+          <div class="card-meta">
+            <span>${escapeHtml(r.source)}</span>
+            ${r.serves ? `<span class="card-serves">🍽 ${escapeHtml(r.serves)}</span>` : ''}
+          </div>
+        </div>
+      </a>
+    `
+  }
+
+  async function renderRecentlyViewed() {
+    const container = document.getElementById('recently-viewed-home')
+    if (!container) return
+    const ids = Lists.getRecentViews()
+    if (!ids.length) {
+      container.innerHTML = ''
+      container.style.display = 'none'
+      return
+    }
+    try {
+      const res = await fetch(`/api/recipes?ids=${ids.join(',')}`)
+      if (!res.ok) throw new Error('Failed to load recent views')
+      const data = await res.json()
+      const byId = new Map(data.map(r => [String(r.stable_id || r.id), r]))
+      const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+      if (!ordered.length) {
+        container.innerHTML = ''
+        container.style.display = 'none'
+        return
+      }
+      container.style.display = ''
+      container.innerHTML = `
+        <h2>👁 Recently viewed</h2>
+        <div class="recently-viewed-grid">${ordered.map(renderRecentCard).join('')}</div>
+      `
+    } catch (err) {
+      console.error('[cookster] recent views error:', err)
+      container.innerHTML = ''
+      container.style.display = 'none'
+    }
+  }
+
   async function loadNewBooks() {
     currentView = 'search'
     activeListId = null
@@ -306,58 +363,53 @@
     syncUrl(false)
     countEl.textContent = ''
     setBusy(true)
+    let homeHtml = ''
     try {
       const res = await fetch('/api/new-books?limit=5')
       if (!res.ok) throw new Error('Failed to load new books')
       const data = await res.json()
       const books = data.books || []
       if (books.length === 0) {
-        resultsEl.innerHTML = `
+        homeHtml = `
           <div class="empty empty-home">
-            <h2>Start typing to search</h2>
-            <p>Try an ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>. Or use the filters above for dietary shortcuts.</p>
+            <h2>👋 Welcome to your cookbooks</h2>
+            <p>Your newest cookbooks will appear here. Start typing to search for recipes, ingredients, or methods. Try a popular ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>, or use the filters above for dietary shortcuts.</p>
             <div class="empty-actions">
               <button class="empty-example" data-q="chicken">🍗 Chicken</button>
               <button class="empty-example" data-q="chocolate cake">🍰 Chocolate cake</button>
               <button class="empty-example" data-q="quick">⏱ Quick</button>
             </div>
           </div>`
-        resultsEl.querySelectorAll('.empty-example').forEach(btn => {
-          btn.addEventListener('click', () => {
-            qInput.value = btn.dataset.q
-            page = 1
-            doSearch({ pushHistory: true })
-          })
-        })
-        return
+      } else {
+        homeHtml = `
+          <div class="new-books-home">
+            <h2>📚 New cookbooks</h2>
+            <div class="books-grid new-books-grid">${books.map(renderNewBookCard).join('')}</div>
+          </div>`
       }
-      resultsEl.innerHTML = `
-        <div class="new-books-home">
-          <h2>📚 New cookbooks</h2>
-          <div class="books-grid new-books-grid">${books.map(renderNewBookCard).join('')}</div>
-        </div>`
     } catch (err) {
       console.error('[cookster] new books error:', err)
-      resultsEl.innerHTML = `
+      homeHtml = `
         <div class="empty empty-home">
-          <h2>Start typing to search</h2>
-          <p>Try an ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>.</p>
+          <h2>👋 Welcome to your cookbooks</h2>
+          <p>Start typing to search for recipes, ingredients, or methods. Try a popular ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>.</p>
           <div class="empty-actions">
             <button class="empty-example" data-q="chicken">🍗 Chicken</button>
             <button class="empty-example" data-q="pasta">🍝 Pasta</button>
             <button class="empty-example" data-q="dessert">🍰 Dessert</button>
           </div>
         </div>`
-      resultsEl.querySelectorAll('.empty-example').forEach(btn => {
-        btn.addEventListener('click', () => {
-          qInput.value = btn.dataset.q
-          page = 1
-          doSearch({ pushHistory: true })
-        })
-      })
-    } finally {
-      setBusy(false)
     }
+    resultsEl.innerHTML = homeHtml + '<div id="recently-viewed-home" class="recently-viewed-home" style="display:none"></div>'
+    resultsEl.querySelectorAll('.empty-example').forEach(btn => {
+      btn.addEventListener('click', () => {
+        qInput.value = btn.dataset.q
+        page = 1
+        doSearch({ pushHistory: true })
+      })
+    })
+    renderRecentlyViewed()
+    setBusy(false)
   }
 
   function renderCard(r) {
@@ -570,8 +622,8 @@
         } catch (e) {}
         resultsEl.innerHTML = `
           <div class="empty empty-search">
-            <h2>No recipes found for “${escapeHtml(q)}”${escapeHtml(activeFilterText)}</h2>
-            <p>Try one of these popular searches, or remove some filters.</p>
+            <h2>😕 No recipes found for “${escapeHtml(q)}”${escapeHtml(activeFilterText)}</h2>
+            <p>We couldn't find a match. Try one of these popular searches, remove a filter, or check your spelling.</p>
             ${suggestionHtml}
             <div class="empty-actions">
               <button class="empty-example" data-q="chocolate">🍫 Chocolate</button>
@@ -615,8 +667,8 @@
       console.error('[cookster] search error:', err)
       resultsEl.innerHTML = `
         <div class="empty">
-          <h2>Something went wrong</h2>
-          <p>${err.message}</p>
+          <h2>🙈 Something went wrong</h2>
+          <p>${err.message}. Try refreshing the page or search again in a moment.</p>
         </div>`
       updatePager()
     } finally {
@@ -651,8 +703,8 @@
     if (ids.length === 0) {
       resultsEl.innerHTML = `
         <div class="empty empty-list">
-          <h2>${escapeHtml(title)} is empty</h2>
-          <p>Tap the heart or “Want to try” button on any recipe to add it here.</p>
+          <h2>📂 ${escapeHtml(title)} is empty</h2>
+          <p>Save recipes you love by tapping the heart ❤️ or “Want to try” 🍽 button on any recipe card.</p>
           <button id="empty-browse" class="btn secondary">🔎 Browse recipes</button>
         </div>`
       const emptyBrowse = resultsEl.querySelector('#empty-browse')
@@ -879,6 +931,39 @@
     if (boostPantry && qInput.value.trim()) doSearch({ pushHistory: true })
   }
 
+  async function renderStats() {
+    const data = Lists.load()
+    if (statsFavCountEl) statsFavCountEl.textContent = data.favorites.length
+    if (statsWantCountEl) statsWantCountEl.textContent = data.wantToTry.length
+    if (statsCookedCountEl) statsCookedCountEl.textContent = Object.keys(data.cooked || {}).length
+    if (!statsMostCookedEl) return
+    const ids = Lists.getMostCookedIds(3)
+    if (!ids.length) {
+      statsMostCookedEl.innerHTML = '<p class="empty-lists">No recipes marked as cooked yet.</p>'
+      return
+    }
+    try {
+      const res = await fetch(`/api/recipes?ids=${ids.join(',')}`)
+      if (!res.ok) throw new Error('Failed to load most cooked')
+      const recipes = await res.json()
+      const byId = new Map(recipes.map(r => [String(r.stable_id || r.id), r]))
+      const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+      statsMostCookedEl.innerHTML = `
+        <ol class="most-cooked-list">
+          ${ordered.map(r => `
+            <li>
+              <a href="/recipe/${r.stable_id || String(r.id)}">${escapeHtml(r.title)}</a>
+              <span class="most-cooked-source">${escapeHtml(r.source)}</span>
+            </li>
+          `).join('')}
+        </ol>
+      `
+    } catch (err) {
+      console.error('[cookster] stats error:', err)
+      statsMostCookedEl.innerHTML = '<p class="empty-lists">Unable to load most cooked recipes.</p>'
+    }
+  }
+
   function renderListsPanel() {
     const data = Lists.load()
     if (favCountEl) favCountEl.textContent = data.favorites.length
@@ -926,6 +1011,7 @@
     renderShoppingList()
     renderMealPlan()
     renderPantry()
+    renderStats()
   }
 
   function renderShoppingList() {
@@ -1399,6 +1485,57 @@
   if (saved) document.documentElement.setAttribute('data-theme', saved)
   syncTheme()
 
+  function initVoiceSearch() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition || !voiceBtn) {
+      if (voiceBtn) voiceBtn.style.display = 'none'
+      return
+    }
+    const recognition = new SpeechRecognition()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = document.documentElement.lang || 'en-US'
+
+    voiceBtn.addEventListener('click', () => {
+      try {
+        recognition.start()
+        voiceBtn.classList.add('listening')
+        voiceBtn.setAttribute('aria-label', 'Listening…')
+        showToast('🎤 Listening…')
+      } catch (e) {
+        console.error('[cookster] voice start error:', e)
+        showToast('Could not start voice search')
+      }
+    })
+
+    recognition.addEventListener('result', (e) => {
+      const transcript = e.results[0][0].transcript
+      qInput.value = transcript
+      voiceBtn.classList.remove('listening')
+      voiceBtn.setAttribute('aria-label', 'Search by voice')
+      closeSuggestions()
+      doSearch({ pushHistory: true })
+    })
+
+    recognition.addEventListener('error', (e) => {
+      console.error('[cookster] voice error:', e.error)
+      voiceBtn.classList.remove('listening')
+      voiceBtn.setAttribute('aria-label', 'Search by voice')
+      if (e.error === 'not-allowed') {
+        showToast('Microphone access denied. Please allow it and try again.')
+      } else if (e.error === 'no-speech') {
+        showToast('No speech detected. Please try again.')
+      } else {
+        showToast('Voice search failed. Please try again.')
+      }
+    })
+
+    recognition.addEventListener('end', () => {
+      voiceBtn.classList.remove('listening')
+      voiceBtn.setAttribute('aria-label', 'Search by voice')
+    })
+  }
+
   // Initialise
   loadSources()
   if (sortSelect) sortSelect.value = currentSort
@@ -1408,6 +1545,7 @@
   updateFilterChips()
   renderSavedSearches()
   updateSaveSearchButton()
+  initVoiceSearch()
   const viewParam = params.get('view')
   const listParam = params.get('list')
   if (viewParam === 'list' && listParam) {

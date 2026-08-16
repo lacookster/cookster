@@ -37,6 +37,7 @@
         <div class="search-box">
           <span class="search-icon" aria-hidden="true">🔎</span>
           <input id="q" placeholder="Search recipes, ingredients, or methods…" autocomplete="off" autofocus />
+          <button id="voice-search" class="voice-search-btn" type="button" aria-label="Search by voice">🎤</button>
           <div id="suggestions" class="suggestions" aria-hidden="true"></div>
         <div id="recent-searches" class="recent-searches" aria-hidden="true"></div>
           <button id="go">Search</button>
@@ -105,6 +106,7 @@
       </div>
       <nav class="lists-tabs" role="tablist">
         <button class="lists-tab active" data-tab="lists" role="tab" aria-selected="true">Lists</button>
+        <button class="lists-tab" data-tab="stats" role="tab" aria-selected="false">📊 Stats</button>
         <button class="lists-tab" data-tab="pantry" role="tab" aria-selected="false">🥫 Pantry</button>
         <button class="lists-tab" data-tab="shopping" role="tab" aria-selected="false">Shopping</button>
         <button class="lists-tab" data-tab="mealplan" role="tab" aria-selected="false">Meal Plan</button>
@@ -129,6 +131,28 @@
               <input type="text" id="new-list-name" placeholder="New list name" autocomplete="off" />
               <button type="submit">Add</button>
             </form>
+          </section>
+        </div>
+
+        <div class="tab-panel" data-tab="stats">
+          <section class="list-section">
+            <h3>📊 Cooking stats</h3>
+            <div class="stats-grid">
+              <div class="stats-card">
+                <span class="stats-number" id="stats-fav-count">0</span>
+                <span class="stats-label">Favourites</span>
+              </div>
+              <div class="stats-card">
+                <span class="stats-number" id="stats-want-count">0</span>
+                <span class="stats-label">Want to try</span>
+              </div>
+              <div class="stats-card">
+                <span class="stats-number" id="stats-cooked-count">0</span>
+                <span class="stats-label">Cooked</span>
+              </div>
+            </div>
+            <h4>Top cooked recipes</h4>
+            <div id="stats-most-cooked"></div>
           </section>
         </div>
 

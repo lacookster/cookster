@@ -25,6 +25,7 @@
   const watchVideoLink = document.getElementById('watch-video')
   const removeVideoBtn = document.getElementById('remove-video')
   const videoActions = document.getElementById('video-actions')
+  const shareBtn = document.getElementById('share-recipe')
   const lightbox = document.getElementById('lightbox')
   const lightboxImg = document.getElementById('lightbox-img')
   const lightboxClose = document.getElementById('lightbox-close')
@@ -508,8 +509,31 @@
       } catch (e) {
         showToast('Could not copy link')
       }
+    })
+  }
+
+  async function copyLinkFallback() {
+    try {
+      await navigator.clipboard.writeText(pageUrl)
+      showToast('Recipe link copied')
+    } catch (e) {
+      showToast('Could not copy link')
+    }
+  }
+
+  if (shareBtn) {
+    shareBtn.addEventListener('click', async () => {
       if (navigator.share) {
-        navigator.share({ title: document.title, url: pageUrl }).catch(() => {})
+        try {
+          await navigator.share({ title: document.title, url: pageUrl })
+        } catch (e) {
+          if (e.name !== 'AbortError') {
+            console.error('[cookster] share error:', e)
+            await copyLinkFallback()
+          }
+        }
+      } else {
+        await copyLinkFallback()
       }
     })
   }
@@ -668,4 +692,5 @@
   renderCooked()
   renderSubstitution()
   initIngredientChecks()
+  Lists.addRecentView(recipeId)
 })()

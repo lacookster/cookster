@@ -120,6 +120,7 @@
       cooked: {},
       substitutions: {},
       videoLinks: {},
+      recentlyViewed: [],
       updatedAt: 0
     }
   }
@@ -143,6 +144,7 @@
         cooked: parsed.cooked && typeof parsed.cooked === 'object' ? parsed.cooked : {},
         substitutions: parsed.substitutions && typeof parsed.substitutions === 'object' ? parsed.substitutions : {},
         videoLinks: parsed.videoLinks && typeof parsed.videoLinks === 'object' ? parsed.videoLinks : {},
+        recentlyViewed: Array.isArray(parsed.recentlyViewed) ? parsed.recentlyViewed : [],
         updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0
       }
     } catch (e) {
@@ -239,7 +241,8 @@
       Object.keys(data.ratings || {}).length > 0 ||
       Object.keys(data.cooked || {}).length > 0 ||
       Object.keys(data.substitutions || {}).length > 0 ||
-      Object.keys(data.videoLinks || {}).length > 0
+      Object.keys(data.videoLinks || {}).length > 0 ||
+      (data.recentlyViewed && data.recentlyViewed.length > 0)
   }
 
   function resolveAndStore(serverPayload) {
@@ -704,6 +707,35 @@
       return load().videoLinks[normalizeId(recipeId)] || ''
     },
 
+    // Cooking stats --------------------------------------------------------
+    getCookedCount() {
+      return Object.keys(load().cooked || {}).length
+    },
+
+    getMostCookedIds(limit = 3) {
+      const data = load().cooked || {}
+      return Object.entries(data)
+        .sort((a, b) => new Date(b[1]) - new Date(a[1]))
+        .slice(0, limit)
+        .map(([id]) => id)
+    },
+
+    // Recently viewed ------------------------------------------------------
+    addRecentView(recipeId) {
+      recipeId = normalizeId(recipeId)
+      const data = load()
+      const recents = data.recentlyViewed || []
+      const filtered = recents.filter(id => id !== recipeId)
+      filtered.unshift(recipeId)
+      while (filtered.length > 20) filtered.pop()
+      data.recentlyViewed = filtered
+      save(data)
+    },
+
+    getRecentViews() {
+      return (load().recentlyViewed || []).slice()
+    },
+
     // Backup / import ------------------------------------------------------
     exportAll() {
       return load()
@@ -731,6 +763,7 @@
         cooked: data.cooked && typeof data.cooked === 'object' ? data.cooked : {},
         substitutions: data.substitutions && typeof data.substitutions === 'object' ? data.substitutions : {},
         videoLinks: data.videoLinks && typeof data.videoLinks === 'object' ? data.videoLinks : {},
+        recentlyViewed: Array.isArray(data.recentlyViewed) ? data.recentlyViewed : [],
         updatedAt: Date.now()
       }
       save(merged)
