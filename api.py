@@ -873,6 +873,13 @@ def ui(request: Request):
     return HTMLResponse(content)
 
 
+@app.get('/offline', response_class=HTMLResponse)
+def offline_page(request: Request):
+    tmpl = templates.env.get_template('offline.html')
+    content = tmpl.render(request=request)
+    return HTMLResponse(content)
+
+
 @app.get('/search')
 def search(q: str = Query(''),
            db: str = Query('cookster.db'),

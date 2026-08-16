@@ -19,6 +19,7 @@
           </div>
         </a>
         <div class="header-actions">
+          <button id="install-btn" class="theme-toggle install-btn" aria-label="Install Cookster" hidden>📲 Install</button>
           <button id="lists-toggle" class="theme-toggle" aria-label="My lists">📝 My Lists</button>
           <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
           <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
@@ -273,6 +274,49 @@
       <button type="button" class="mobile-nav-item" data-action="shopping">🛒 Shop</button>
       <button type="button" class="mobile-nav-item" data-action="lists">📝 Lists</button>
     </nav>
+
+    <div id="onboarding-overlay" class="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Cookster" hidden>
+      <div class="onboarding-card">
+        <div class="onboarding-slides">
+          <div class="onboarding-slide active" data-slide="0">
+            <div class="onboarding-icon">👋</div>
+            <h2>Welcome to Cookster</h2>
+            <p>Search every recipe across your whole cookbook collection in one place.</p>
+          </div>
+          <div class="onboarding-slide" data-slide="1">
+            <div class="onboarding-icon">🔎</div>
+            <h2>Search & filters</h2>
+            <p>Type ingredients, recipe names, or methods. Use the filter chips for quick dietary shortcuts like vegetarian, gluten-free, or quick meals.</p>
+          </div>
+          <div class="onboarding-slide" data-slide="2">
+            <div class="onboarding-icon">🥫</div>
+            <h2>Pantry & saved searches</h2>
+            <p>Save ingredients you always have, boost matching recipes, and save your favourite searches to come back to later.</p>
+          </div>
+          <div class="onboarding-slide" data-slide="3">
+            <div class="onboarding-icon">📝</div>
+            <h2>Lists</h2>
+            <p>Keep favourites, recipes you want to try, and custom lists all in one spot.</p>
+          </div>
+          <div class="onboarding-slide" data-slide="4">
+            <div class="onboarding-icon">📅</div>
+            <h2>Meal plan</h2>
+            <p>Drag recipes onto days to build your weekly meal plan, then add the ingredients straight to your shopping list.</p>
+          </div>
+          <div class="onboarding-slide" data-slide="5">
+            <div class="onboarding-icon">👨‍🍳</div>
+            <h2>Cooking mode</h2>
+            <p>Open any recipe, scale portions, and use cooking mode with a timer and wake lock so the screen stays on while you cook.</p>
+          </div>
+        </div>
+        <div class="onboarding-dots" id="onboarding-dots"></div>
+        <div class="onboarding-actions">
+          <button id="onboarding-prev" class="btn secondary" type="button">Back</button>
+          <button id="onboarding-next" class="btn" type="button">Next</button>
+          <button id="onboarding-finish" class="btn" type="button">Get started</button>
+        </div>
+      </div>
+    </div>
 
     <script src="/static/lists.js" defer></script>
     <script src="/static/app.js" defer></script>

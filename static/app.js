@@ -50,6 +50,13 @@
   const haveBox = document.getElementById('have-box')
   const whatIHaveToggle = document.getElementById('what-i-have-toggle')
 
+  const installBtn = document.getElementById('install-btn')
+  const onboardingOverlay = document.getElementById('onboarding-overlay')
+  const onboardingDots = document.getElementById('onboarding-dots')
+  const onboardingPrev = document.getElementById('onboarding-prev')
+  const onboardingNext = document.getElementById('onboarding-next')
+  const onboardingFinish = document.getElementById('onboarding-finish')
+
   const suggestionsEl = document.getElementById('suggestions')
   const recentSearchesEl = document.getElementById('recent-searches')
   const randomBtn = document.getElementById('random')
@@ -1815,7 +1822,111 @@
     })
   }
 
+  // Service worker registration and PWA install prompt ------------------------
+  let deferredPrompt = null
+
+  function registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/static/sw.js')
+        .then((reg) => console.log('[cookster] sw registered:', reg.scope))
+        .catch((err) => console.error('[cookster] sw registration failed:', err))
+    }
+  }
+
+  function showInstallButton() {
+    if (!installBtn) return
+    installBtn.hidden = false
+  }
+
+  function hideInstallButton() {
+    if (!installBtn) return
+    installBtn.hidden = true
+    deferredPrompt = null
+  }
+
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      if (!deferredPrompt) return
+      deferredPrompt.prompt()
+      try {
+        const choice = await deferredPrompt.userChoice
+        console.log('[cookster] install choice:', choice.outcome)
+      } catch (err) {
+        console.error('[cookster] install prompt error:', err)
+      }
+      hideInstallButton()
+    })
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault()
+    deferredPrompt = e
+    showInstallButton()
+  })
+
+  window.addEventListener('appinstalled', () => {
+    console.log('[cookster] app installed')
+    hideInstallButton()
+  })
+
+  // Onboarding tour ----------------------------------------------------------
+  const ONBOARDING_KEY = 'cookster_onboarding_done'
+  let onboardingSlide = 0
+  const onboardingSlides = onboardingOverlay ? Array.from(onboardingOverlay.querySelectorAll('.onboarding-slide')) : []
+  const totalOnboardingSlides = onboardingSlides.length
+
+  function renderOnboardingDots() {
+    if (!onboardingDots) return
+    onboardingDots.innerHTML = onboardingSlides.map((_, i) => `
+      <button class="onboarding-dot ${i === onboardingSlide ? 'active' : ''}" data-slide="${i}" aria-label="Go to slide ${i + 1}"></button>
+    `).join('')
+    onboardingDots.querySelectorAll('.onboarding-dot').forEach(dot => {
+      dot.addEventListener('click', () => goToOnboardingSlide(parseInt(dot.dataset.slide, 10)))
+    })
+  }
+
+  function goToOnboardingSlide(index) {
+    if (!onboardingOverlay || !onboardingSlides.length) return
+    onboardingSlide = Math.max(0, Math.min(index, totalOnboardingSlides - 1))
+    onboardingSlides.forEach((slide, i) => slide.classList.toggle('active', i === onboardingSlide))
+    renderOnboardingDots()
+    if (onboardingPrev) onboardingPrev.hidden = onboardingSlide === 0
+    if (onboardingNext) onboardingNext.hidden = onboardingSlide === totalOnboardingSlides - 1
+    if (onboardingFinish) onboardingFinish.hidden = onboardingSlide !== totalOnboardingSlides - 1
+  }
+
+  function openOnboarding() {
+    if (!onboardingOverlay) return
+    onboardingOverlay.hidden = false
+    onboardingSlide = 0
+    goToOnboardingSlide(0)
+  }
+
+  function closeOnboarding() {
+    if (!onboardingOverlay) return
+    onboardingOverlay.hidden = true
+    try {
+      localStorage.setItem(ONBOARDING_KEY, 'true')
+    } catch (e) {}
+  }
+
+  if (onboardingPrev) {
+    onboardingPrev.addEventListener('click', () => goToOnboardingSlide(onboardingSlide - 1))
+  }
+  if (onboardingNext) {
+    onboardingNext.addEventListener('click', () => goToOnboardingSlide(onboardingSlide + 1))
+  }
+  if (onboardingFinish) {
+    onboardingFinish.addEventListener('click', closeOnboarding)
+  }
+  if (onboardingOverlay) {
+    onboardingOverlay.addEventListener('click', (e) => {
+      if (e.target === onboardingOverlay) closeOnboarding()
+    })
+  }
+
   // Initialise
+  registerServiceWorker()
   loadSources()
   if (sortSelect) sortSelect.value = currentSort
   loadStats()
@@ -1826,6 +1937,15 @@
   renderSavedSearches()
   updateSaveSearchButton()
   initVoiceSearch()
+
+  if (onboardingOverlay) {
+    try {
+      if (!localStorage.getItem(ONBOARDING_KEY)) {
+        openOnboarding()
+      }
+    } catch (e) {}
+  }
+
   const viewParam = params.get('view')
   const listParam = params.get('list')
   if (viewParam === 'list' && listParam) {
