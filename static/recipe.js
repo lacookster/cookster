@@ -2,6 +2,7 @@
   const Lists = window.CooksterLists
   const recipeId = String(document.getElementById('recipe-fav').dataset.id)
   const favBtn = document.getElementById('recipe-fav')
+  const wantBtn = document.getElementById('recipe-want')
   const listToggle = document.getElementById('list-toggle')
   const listMenu = document.getElementById('list-menu')
   const listMenuItems = document.getElementById('list-menu-items')
@@ -25,6 +26,14 @@
     favBtn.classList.toggle('active', isFav)
     favBtn.textContent = isFav ? '♥' : '♡'
     favBtn.setAttribute('aria-label', isFav ? 'Remove from favourites' : 'Add to favourites')
+  }
+
+  function updateWant() {
+    if (!wantBtn) return
+    const isWant = Lists.isWantToTry(recipeId)
+    wantBtn.classList.toggle('active', isWant)
+    wantBtn.setAttribute('aria-label', isWant ? 'Remove from Want to try' : 'Add to Want to try')
+    wantBtn.setAttribute('title', isWant ? 'Remove from Want to try' : 'Add to Want to try')
   }
 
   function renderMenu() {
@@ -85,6 +94,14 @@
     Lists.toggleFavorite(recipeId)
     updateFav()
   })
+
+  if (wantBtn) {
+    wantBtn.addEventListener('click', () => {
+      Lists.toggleWantToTry(recipeId)
+      updateWant()
+      showToast(Lists.isWantToTry(recipeId) ? 'Added to Want to try' : 'Removed from Want to try')
+    })
+  }
 
   listToggle.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -281,6 +298,13 @@
       applyScale()
     })
   }
+  document.querySelectorAll('.scale-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!scaleInput) return
+      scaleInput.value = btn.dataset.scale
+      applyScale()
+    })
+  })
 
   // Cooking mode -----------------------------------------------------------
   const startCookingBtn = document.getElementById('start-cooking')
@@ -291,9 +315,11 @@
   const cookingStepText = document.getElementById('cooking-step-text')
   const cookingStepNum = document.getElementById('cooking-step-num')
   const cookingStepTotal = document.getElementById('cooking-step-total')
+  const cookingTimersEl = document.getElementById('cooking-timers')
 
   let cookingSteps = []
   let cookingIndex = 0
+  const activeTimers = new Map()
 
   function initCooking() {
     if (!cookingOverlay) return
@@ -314,11 +340,102 @@
     document.body.style.overflow = ''
   }
 
+  function parseStepTimes(text) {
+    const times = []
+    // Match patterns like "25 minutes", "1 hour", "1 hour 30 minutes", "30 min", "2 hr"
+    const pattern = /(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|hr?s?|hours?)/gi
+    let match
+    while ((match = pattern.exec(text)) !== null) {
+      const value = parseFloat(match[1])
+      const unit = match[2].toLowerCase()
+      const seconds = unit.startsWith('hour') || unit === 'hr' || unit === 'hrs' ? value * 3600 : value * 60
+      times.push({ original: match[0], value, unit, seconds })
+    }
+    return times
+  }
+
+  function formatTime(totalSeconds) {
+    const m = Math.floor(totalSeconds / 60)
+    const s = totalSeconds % 60
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+
+  function startTimer(seconds, label, button) {
+    const id = Date.now() + Math.random()
+    let remaining = Math.round(seconds)
+    if (activeTimers.has(id)) return
+    activeTimers.set(id, { remaining, interval: null })
+
+    button.disabled = true
+    button.classList.add('timer-running')
+    button.textContent = `${label}: ${formatTime(remaining)}`
+
+    const interval = setInterval(() => {
+      remaining--
+      const t = activeTimers.get(id)
+      if (!t) { clearInterval(interval); return }
+      t.remaining = remaining
+      if (remaining <= 0) {
+        clearInterval(interval)
+        activeTimers.delete(id)
+        button.disabled = false
+        button.classList.remove('timer-running')
+        button.textContent = `${label}: done!`
+        // Try a gentle alert if the user left the tab.
+        try {
+          if (Notification.permission === 'granted') {
+            new Notification('Cookster timer', { body: `${label} is ready!` })
+          } else {
+            showToast(`${label} timer is up`)
+          }
+        } catch (e) { showToast(`${label} timer is up`) }
+        return
+      }
+      button.textContent = `${label}: ${formatTime(remaining)}`
+    }, 1000)
+    activeTimers.get(id).interval = interval
+
+    // Request notification permission on first timer.
+    try {
+      if (Notification.permission === 'default') Notification.requestPermission()
+    } catch (e) {}
+  }
+
   function renderCookingStep() {
     cookingStepNum.textContent = cookingIndex + 1
     cookingStepText.textContent = cookingSteps[cookingIndex]
     cookingPrev.disabled = cookingIndex === 0
     cookingNext.textContent = cookingIndex === cookingSteps.length - 1 ? 'Done' : 'Next →'
+
+    // Clear previous timers when changing steps.
+    activeTimers.forEach(t => clearInterval(t.interval))
+    activeTimers.clear()
+
+    if (!cookingTimersEl) return
+    const times = parseStepTimes(cookingSteps[cookingIndex])
+    if (!times.length) {
+      cookingTimersEl.innerHTML = ''
+      return
+    }
+    const seen = new Set()
+    const unique = times.filter(t => {
+      const key = t.value + '-' + t.unit
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    cookingTimersEl.innerHTML = `
+      <div class="cooking-timers-label">⏱ Timers for this step</div>
+      <div class="cooking-timers-list">
+        ${unique.map(t => `<button class="btn secondary cooking-timer" data-seconds="${t.seconds}" data-label="${escapeHtml(t.original)}">Start ${escapeHtml(t.original)}</button>`).join('')}
+      </div>
+    `
+    cookingTimersEl.querySelectorAll('.cooking-timer').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const seconds = parseInt(btn.dataset.seconds, 10)
+        startTimer(seconds, btn.dataset.label, btn)
+      })
+    })
   }
 
   if (startCookingBtn) startCookingBtn.addEventListener('click', initCooking)
@@ -379,6 +496,7 @@
 
   loadRelated()
   updateFav()
+  updateWant()
   renderRating()
   renderCooked()
 })()

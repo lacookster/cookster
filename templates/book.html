@@ -58,6 +58,10 @@
             <span class="list-name">❤️ Favourites</span>
             <span class="list-count" id="fav-count">0</span>
           </div>
+          <div class="list-row want-row" data-list-id="__want_to_try__">
+            <span class="list-name">🍽 Want to try</span>
+            <span class="list-count" id="want-count">0</span>
+          </div>
         </section>
         <section class="list-section custom-lists">
           <h3>Custom lists</h3>
@@ -98,6 +102,7 @@
           function renderCard(r) {
             const sid = r.stable_id || String(r.id)
             const isFav = Lists.isFavorite(sid)
+            const isWant = Lists.isWantToTry(sid)
             const imageHtml = r.image_url
               ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
               : `<div class="card-media"><div class="placeholder">📷 No image</div></div>`
@@ -107,7 +112,10 @@
                 <div class="card-body">
                   <div class="card-title-row">
                     <h3><a href="/recipe/${sid}?db=${encodeURIComponent(db)}">${r.title}</a></h3>
-                    <button class="fav-btn ${isFav ? 'active' : ''}" data-id="${sid}" aria-label="${isFav ? 'Remove from favourites' : 'Add to favourites'}">${heartIcon(isFav)}</button>
+                    <div class="card-title-actions">
+                      <button class="want-btn ${isWant ? 'active' : ''}" data-id="${sid}" aria-label="${isWant ? 'Remove from Want to try' : 'Add to Want to try'}" title="${isWant ? 'Remove from Want to try' : 'Add to Want to try'}">🍽</button>
+                      <button class="fav-btn ${isFav ? 'active' : ''}" data-id="${sid}" aria-label="${isFav ? 'Remove from favourites' : 'Add to favourites'}">${heartIcon(isFav)}</button>
+                    </div>
                   </div>
                 </div>
               </article>
@@ -135,7 +143,16 @@
                   btn.textContent = heartIcon(nowFav)
                 })
               })
-              document.getElementById('fav-count').textContent = Lists.getFavorites().length
+              resultsEl.querySelectorAll('.want-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                  const nowWant = Lists.toggleWantToTry(btn.dataset.id)
+                  btn.classList.toggle('active', nowWant)
+                  btn.setAttribute('aria-label', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
+                  btn.setAttribute('title', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
+                })
+              })
+              const favCount = document.getElementById('fav-count')
+              if (favCount) favCount.textContent = Lists.getFavorites().length
             } catch (err) {
               console.error(err)
               subtitleEl.textContent = 'Error loading recipes.'
@@ -150,6 +167,8 @@
           document.getElementById('lists-toggle').addEventListener('click', () => {
             listsPanel.classList.add('open')
             listsBackdrop.classList.add('open')
+            const wantCount = document.getElementById('want-count')
+            if (wantCount) wantCount.textContent = Lists.getWantToTry().length
           })
           document.getElementById('lists-close').addEventListener('click', () => {
             listsPanel.classList.remove('open')

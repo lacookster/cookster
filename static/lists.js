@@ -27,9 +27,88 @@
     return String(id)
   }
 
+  // Shopping deduplication helpers -------------------------------------------
+  const UNITS = ['kg', 'g', 'mg', 'ml', 'l', 'litre', 'liter', 'litres', 'liters',
+    'cup', 'cups', 'tbsp', 'tablespoon', 'tablespoons', 'tsp', 'teaspoon', 'teaspoons',
+    'oz', 'ounce', 'ounces', 'lb', 'lbs', 'pound', 'pounds',
+    'bunch', 'bunches', 'clove', 'cloves', 'pinch', 'pinches',
+    'slice', 'slices', 'piece', 'pieces', 'leaf', 'leaves', 'sprig', 'sprigs']
+
+  const FRACTIONS = {
+    '\u00bc': 0.25, '\u00bd': 0.5, '\u00be': 0.75,
+    '\u2153': 1 / 3, '\u2154': 2 / 3, '\u215b': 1 / 8,
+    '\u215c': 3 / 8, '\u215d': 5 / 8, '\u215e': 7 / 8
+  }
+
+  function parseNumberPrefix(text) {
+    // Fractions like ½, ¼, ¾, optionally preceded by a whole number.
+    const fracChar = Object.keys(FRACTIONS).find(c => text.includes(c))
+    if (fracChar) {
+      const idx = text.indexOf(fracChar)
+      const before = text.slice(0, idx).trim()
+      const after = text.slice(idx + 1).trim()
+      const wholeMatch = before.match(/(\d+)\s*$/)
+      const whole = wholeMatch ? parseInt(wholeMatch[1], 10) : 0
+      const value = whole + FRACTIONS[fracChar]
+      const prefixEnd = idx + 1
+      return { value, prefixEnd, rest: after }
+    }
+    // Plain integers, decimals, or vulgar fractions like 1/2.
+    const m = text.match(/^\s*(\d+(?:\.\d+)?)\s*(?:\/\s*(\d+))?\s*/)
+    if (!m) return null
+    let value = parseFloat(m[1])
+    if (m[2]) value /= parseInt(m[2], 10)
+    return { value, prefixEnd: m[0].length, rest: text.slice(m[0].length) }
+  }
+
+  function parseShoppingItem(text) {
+    const t = text.trim().toLowerCase()
+    const parsed = parseNumberPrefix(t)
+    if (!parsed) return null
+    let rest = parsed.rest.replace(/^,\s*/, '').trim()
+    // Capture optional unit word.
+    const unitMatch = rest.match(new RegExp('^(' + UNITS.map(u => u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b\\s*'))
+    let unit = ''
+    if (unitMatch) {
+      unit = unitMatch[1]
+      rest = rest.slice(unitMatch[0].length).replace(/^,\s*/, '').trim()
+    }
+    // Strip common prep descriptors to get a normalised base name.
+    const descriptors = ['fresh', 'freshly', 'ground', 'chopped', 'sliced', 'diced', 'peeled', 'grated', 'crushed', 'minced', 'beaten', 'melted', 'softened', 'large', 'small', 'medium']
+    let name = rest.replace(/\s+/g, ' ')
+    descriptors.forEach(d => {
+      name = name.replace(new RegExp('\\b' + d + '\\b\\s*', 'g'), '')
+    })
+    name = name.replace(/\s+/g, ' ').trim()
+    if (!name) return null
+    // Simple singularisation.
+    if (name.endsWith('s') && !name.endsWith('ss')) {
+      name = name.slice(0, -1)
+    }
+    return { qty: parsed.value, unit, name, original: text }
+  }
+
+  function formatQty(value) {
+    const rounded = Math.round(value * 100) / 100
+    if (Math.abs(rounded - Math.round(rounded)) < 0.001) return String(Math.round(rounded))
+    return String(rounded)
+  }
+
+  function normaliseUnit(unit) {
+    const map = { 'litres': 'l', 'liters': 'l', 'liter': 'l', 'litre': 'l',
+      'tablespoons': 'tbsp', 'tablespoon': 'tbsp',
+      'teaspoons': 'tsp', 'teaspoon': 'tsp',
+      'ounces': 'oz', 'ounce': 'oz',
+      'pounds': 'lb', 'lbs': 'lb',
+      'bunches': 'bunch', 'cloves': 'clove', 'pinches': 'pinch',
+      'slices': 'slice', 'pieces': 'piece', 'leaves': 'leaf', 'sprigs': 'sprig' }
+    return map[unit] || unit
+  }
+
   function emptyData() {
     return {
       favorites: [],
+      wantToTry: [],
       lists: [],
       shopping: { items: [] },
       mealPlan: {},
@@ -47,6 +126,7 @@
       if (!parsed || typeof parsed !== 'object') return null
       return {
         favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
+        wantToTry: Array.isArray(parsed.wantToTry) ? parsed.wantToTry : [],
         lists: Array.isArray(parsed.lists) ? parsed.lists : [],
         shopping: parsed.shopping && typeof parsed.shopping === 'object' ? parsed.shopping : { items: [] },
         mealPlan: parsed.mealPlan && typeof parsed.mealPlan === 'object' ? parsed.mealPlan : {},
@@ -138,6 +218,7 @@
   function hasContent(data) {
     if (!data) return false
     return data.favorites.length > 0 ||
+      data.wantToTry.length > 0 ||
       data.lists.length > 0 ||
       (data.shopping && data.shopping.items && data.shopping.items.length > 0) ||
       Object.keys(data.mealPlan || {}).length > 0 ||
@@ -204,6 +285,27 @@
 
     getFavorites() {
       return load().favorites
+    },
+
+    toggleWantToTry(id) {
+      id = normalizeId(id)
+      const data = load()
+      const idx = data.wantToTry.indexOf(id)
+      if (idx === -1) {
+        data.wantToTry.push(id)
+      } else {
+        data.wantToTry.splice(idx, 1)
+      }
+      save(data)
+      return idx === -1
+    },
+
+    isWantToTry(id) {
+      return load().wantToTry.includes(normalizeId(id))
+    },
+
+    getWantToTry() {
+      return load().wantToTry
     },
 
     createList(name) {
@@ -349,6 +451,98 @@
       save(data)
     },
 
+    uncheckAllShopping() {
+      const data = load()
+      data.shopping.items.forEach(i => { i.checked = false })
+      save(data)
+    },
+
+    dedupeShopping() {
+      const data = load()
+      const items = data.shopping.items || []
+      const exactSeen = new Set()
+      const kept = []
+      const groups = new Map()
+
+      items.forEach(item => {
+        const key = item.text.toLowerCase().trim()
+        if (!exactSeen.has(key)) {
+          exactSeen.add(key)
+          kept.push(item)
+        }
+      })
+
+      kept.forEach(item => {
+        const parsed = parseShoppingItem(item.text)
+        if (!parsed) return
+        const unit = normaliseUnit(parsed.unit)
+        const groupKey = parsed.name + '|' + unit
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, { unit, items: [] })
+        }
+        groups.get(groupKey).items.push({ item, parsed })
+      })
+
+      const mergedItems = []
+      groups.forEach(group => {
+        if (group.items.length < 2) {
+          group.items.forEach(({ item }) => mergedItems.push(item))
+          return
+        }
+        const totalQty = group.items.reduce((sum, { parsed }) => sum + parsed.qty, 0)
+        const first = group.items[0].item
+        const qtyText = formatQty(totalQty)
+        const unitText = group.unit ? ' ' + group.unit : ''
+        const name = group.items[0].parsed.name
+        // Capitalise the name for a tidy combined line.
+        const combinedText = qtyText + unitText + ' ' + name.replace(/\b\w/g, c => c.toUpperCase())
+        mergedItems.push({
+          ...first,
+          text: combinedText
+        })
+      })
+
+      // Keep ungrouped items as-is.
+      const groupedKeys = new Set()
+      groups.forEach((_, k) => groupedKeys.add(k))
+      const ungrouped = kept.filter(item => {
+        const parsed = parseShoppingItem(item.text)
+        if (!parsed) return true
+        return !groupedKeys.has(parsed.name + '|' + normaliseUnit(parsed.unit))
+      })
+
+      data.shopping.items = [...mergedItems, ...ungrouped]
+      save(data)
+    },
+
+    addMealPlanToShopping(days = 7) {
+      const data = load()
+      const plan = data.mealPlan || {}
+      const dates = []
+      const todayObj = new Date()
+      for (let i = 0; i < days; i++) {
+        const d = new Date(todayObj)
+        d.setDate(todayObj.getDate() + i)
+        dates.push(d.toISOString().split('T')[0])
+      }
+      const ids = [...new Set(dates.flatMap(d => plan[d] || []))]
+      if (!ids.length) return Promise.resolve(0)
+
+      return fetch('/api/recipes?ids=' + encodeURIComponent(ids.join(',')))
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('fetch failed')))
+        .then(recipes => {
+          let added = 0
+          recipes.forEach(r => {
+            const ingredients = (r.ingredients || '').split('\n').map(l => l.trim()).filter(Boolean)
+            if (ingredients.length) {
+              this.addShoppingItems(ingredients, r.stable_id || String(r.id), r.source)
+              added += ingredients.length
+            }
+          })
+          return added
+        })
+    },
+
     // Meal plan ------------------------------------------------------------
     getMealPlan() {
       return load().mealPlan || {}
@@ -432,6 +626,7 @@
       if (!data || typeof data !== 'object') return { ok: false, error: 'Not an object' }
       const merged = {
         favorites: Array.isArray(data.favorites) ? data.favorites : [],
+        wantToTry: Array.isArray(data.wantToTry) ? data.wantToTry : [],
         lists: Array.isArray(data.lists) ? data.lists : [],
         shopping: data.shopping && typeof data.shopping === 'object' ? data.shopping : { items: [] },
         mealPlan: data.mealPlan && typeof data.mealPlan === 'object' ? data.mealPlan : {},

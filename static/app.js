@@ -16,11 +16,17 @@
   const listsClose = document.getElementById('lists-close')
   const customListsEl = document.getElementById('custom-lists')
   const favCountEl = document.getElementById('fav-count')
+  const wantCountEl = document.getElementById('want-count')
   const newListForm = document.getElementById('new-list-form')
   const newListName = document.getElementById('new-list-name')
   const shoppingListEl = document.getElementById('shopping-list')
   const shoppingEmptyEl = document.querySelector('.shopping-empty')
   const clearBoughtBtn = document.getElementById('clear-bought')
+  const dedupeShoppingBtn = document.getElementById('dedupe-shopping')
+  const uncheckAllShoppingBtn = document.getElementById('uncheck-all-shopping')
+  const clearAllShoppingBtn = document.getElementById('clear-all-shopping')
+  const addMealPlanShopping3Btn = document.getElementById('add-meal-plan-shopping-3')
+  const addMealPlanShopping7Btn = document.getElementById('add-meal-plan-shopping-7')
   const mealPlanEl = document.getElementById('meal-plan')
   const backupExportBtn = document.getElementById('backup-export')
   const backupImportBtn = document.getElementById('backup-import')
@@ -34,6 +40,7 @@
   const resetServerDataBtn = document.getElementById('reset-server-data')
 
   const suggestionsEl = document.getElementById('suggestions')
+  const recentSearchesEl = document.getElementById('recent-searches')
   const randomBtn = document.getElementById('random')
   const bookCountEl = document.getElementById('book-count')
   const bookCountInlineEl = document.getElementById('book-count-inline')
@@ -44,11 +51,14 @@
   let suggestionTimer = null
   let lastQuery = (params.get('q') || '').trim()
   let lastSource = (params.get('source') || '').trim()
+  let activeFilters = new Set((params.get('filters') || '').split(',').filter(Boolean))
   let totalResults = 0
   let currentView = 'search' // 'search' | 'list'
   let activeListId = null
   let activeSuggestion = -1
   const limit = 50
+  const filterChipsEl = document.getElementById('filter-chips')
+  const activeFiltersEl = document.getElementById('active-filters')
 
   if (lastQuery) qInput.value = lastQuery
 
@@ -67,6 +77,112 @@
     prevBtn.style.display = currentView === 'search' ? '' : 'none'
     nextBtn.style.display = currentView === 'search' ? '' : 'none'
     pageEl.parentElement.style.display = currentView === 'search' ? '' : 'none'
+  }
+
+  function updateFilterChips() {
+    if (!filterChipsEl) return
+    filterChipsEl.querySelectorAll('.filter-chip').forEach(btn => {
+      const f = btn.dataset.filter
+      const active = activeFilters.has(f)
+      btn.classList.toggle('active', active)
+      btn.setAttribute('aria-pressed', String(active))
+    })
+    if (activeFiltersEl) {
+      if (activeFilters.size === 0) {
+        activeFiltersEl.innerHTML = ''
+      } else {
+        activeFiltersEl.innerHTML = Array.from(activeFilters).map(f =>
+          `<span class="active-filter-tag" data-filter="${escapeHtml(f)}">${escapeHtml(f.replace(/-/g, ' '))} <button aria-label="Remove ${escapeHtml(f.replace(/-/g, ' '))} filter">×</button></span>`
+        ).join('')
+      }
+      activeFiltersEl.querySelectorAll('.active-filter-tag').forEach(tag => {
+        tag.querySelector('button').addEventListener('click', () => {
+          activeFilters.delete(tag.dataset.filter)
+          updateFilterChips()
+          page = 1
+          doSearch({ pushHistory: true })
+        })
+      })
+    }
+  }
+
+  function filtersQuery() {
+    return Array.from(activeFilters).join(',')
+  }
+
+  const RECENT_SEARCHES_KEY = 'cookster_recent_searches'
+  const MAX_RECENT = 10
+
+  function loadRecentSearches() {
+    try {
+      return JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) || '[]')
+    } catch (e) {
+      return []
+    }
+  }
+
+  function saveRecentSearch(q, filters) {
+    if (!q) return
+    const recents = loadRecentSearches()
+    const updated = recents.filter(r => r.q !== q)
+    updated.unshift({ q, filters: filters || '', source: sourceSelect ? sourceSelect.value : '', timestamp: Date.now() })
+    while (updated.length > MAX_RECENT) updated.pop()
+    try {
+      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated))
+    } catch (e) {}
+  }
+
+  function renderRecentSearches() {
+    if (!recentSearchesEl) return
+    const recents = loadRecentSearches()
+    if (!recents.length || qInput.value.trim()) {
+      closeRecentSearches()
+      return
+    }
+    recentSearchesEl.innerHTML = `
+      <div class="recent-searches-header">
+        <span>Recent searches</span>
+        <button id="clear-recent" class="text-btn">Clear</button>
+      </div>
+      ${recents.map((r, i) => `
+        <div class="recent-search-item" data-index="${i}" role="button" tabindex="0">
+          <span class="recent-search-query">${escapeHtml(r.q)}</span>
+          ${r.filters ? `<span class="recent-search-filters">${escapeHtml(r.filters.replace(/,/g, ' · '))}</span>` : ''}
+        </div>
+      `).join('')}
+    `
+    recentSearchesEl.classList.add('open')
+    recentSearchesEl.setAttribute('aria-hidden', 'false')
+    recentSearchesEl.querySelectorAll('.recent-search-item').forEach(el => {
+      el.addEventListener('click', () => selectRecentSearch(parseInt(el.dataset.index, 10)))
+    })
+    const clearBtn = recentSearchesEl.querySelector('#clear-recent')
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        localStorage.removeItem(RECENT_SEARCHES_KEY)
+        closeRecentSearches()
+      })
+    }
+  }
+
+  function closeRecentSearches() {
+    if (!recentSearchesEl) return
+    recentSearchesEl.innerHTML = ''
+    recentSearchesEl.classList.remove('open')
+    recentSearchesEl.setAttribute('aria-hidden', 'true')
+  }
+
+  function selectRecentSearch(index) {
+    const recents = loadRecentSearches()
+    const r = recents[index]
+    if (!r) return
+    qInput.value = r.q
+    activeFilters = new Set((r.filters || '').split(',').filter(Boolean))
+    updateFilterChips()
+    if (sourceSelect) sourceSelect.value = r.source || ''
+    closeRecentSearches()
+    doSearch({ pushHistory: true })
   }
 
   function heartIcon(filled) {
@@ -141,10 +257,22 @@
       const books = data.books || []
       if (books.length === 0) {
         resultsEl.innerHTML = `
-          <div class="empty">
+          <div class="empty empty-home">
             <h2>Start typing to search</h2>
-            <p>Try an ingredient like "chicken", "chocolate", or "tofu".</p>
+            <p>Try an ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>. Or use the filters above for dietary shortcuts.</p>
+            <div class="empty-actions">
+              <button class="empty-example" data-q="chicken">🍗 Chicken</button>
+              <button class="empty-example" data-q="chocolate cake">🍰 Chocolate cake</button>
+              <button class="empty-example" data-q="quick">⏱ Quick</button>
+            </div>
           </div>`
+        resultsEl.querySelectorAll('.empty-example').forEach(btn => {
+          btn.addEventListener('click', () => {
+            qInput.value = btn.dataset.q
+            page = 1
+            doSearch({ pushHistory: true })
+          })
+        })
         return
       }
       resultsEl.innerHTML = `
@@ -155,10 +283,22 @@
     } catch (err) {
       console.error('[cookster] new books error:', err)
       resultsEl.innerHTML = `
-        <div class="empty">
+        <div class="empty empty-home">
           <h2>Start typing to search</h2>
-          <p>Try an ingredient like "chicken", "chocolate", or "tofu".</p>
+          <p>Try an ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>.</p>
+          <div class="empty-actions">
+            <button class="empty-example" data-q="chicken">🍗 Chicken</button>
+            <button class="empty-example" data-q="pasta">🍝 Pasta</button>
+            <button class="empty-example" data-q="dessert">🍰 Dessert</button>
+          </div>
         </div>`
+      resultsEl.querySelectorAll('.empty-example').forEach(btn => {
+        btn.addEventListener('click', () => {
+          qInput.value = btn.dataset.q
+          page = 1
+          doSearch({ pushHistory: true })
+        })
+      })
     } finally {
       setBusy(false)
     }
@@ -167,6 +307,7 @@
   function renderCard(r) {
     const sid = r.stable_id || String(r.id)
     const isFav = Lists.isFavorite(sid)
+    const isWantToTry = Lists.isWantToTry(sid)
     const inLists = Lists.listsForRecipe(sid)
     const imageHtml = r.image_url
       ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
@@ -182,9 +323,14 @@
         <div class="card-body">
           <div class="card-title-row">
             <h3><a href="/recipe/${sid}">${r.title}</a></h3>
-            <button class="fav-btn ${isFav ? 'active' : ''}" data-id="${sid}" aria-label="${isFav ? 'Remove from favourites' : 'Add to favourites'}">
-              ${heartIcon(isFav)}
-            </button>
+            <div class="card-title-actions">
+              <button class="want-btn ${isWantToTry ? 'active' : ''}" data-id="${sid}" title="${isWantToTry ? 'Remove from Want to try' : 'Add to Want to try'}" aria-label="${isWantToTry ? 'Remove from Want to try' : 'Add to Want to try'}">
+                ${isWantToTry ? '🍽' : '🍽'}
+              </button>
+              <button class="fav-btn ${isFav ? 'active' : ''}" data-id="${sid}" aria-label="${isFav ? 'Remove from favourites' : 'Add to favourites'}">
+                ${heartIcon(isFav)}
+              </button>
+            </div>
           </div>
           <div class="card-meta">
             <a href="/book?source=${encodeURIComponent(r.source_raw || r.source)}">${r.source}</a>
@@ -283,15 +429,19 @@
     const url = new URL(location.href)
     const q = qInput.value.trim()
     const source = sourceSelect ? sourceSelect.value : ''
+    const filters = filtersQuery()
     if (q && currentView === 'search') {
       url.searchParams.set('q', q)
       url.searchParams.set('page', String(page))
       if (source) url.searchParams.set('source', source)
       else url.searchParams.delete('source')
+      if (filters) url.searchParams.set('filters', filters)
+      else url.searchParams.delete('filters')
     } else {
       url.searchParams.delete('q')
       url.searchParams.delete('page')
       url.searchParams.delete('source')
+      url.searchParams.delete('filters')
     }
     if (currentView === 'list' && activeListId) {
       url.searchParams.set('view', 'list')
@@ -301,9 +451,9 @@
       url.searchParams.delete('list')
     }
     if (push) {
-      history.pushState({ q, page, source, currentView, activeListId }, '', url.toString())
+      history.pushState({ q, page, source, filters, currentView, activeListId }, '', url.toString())
     } else {
-      history.replaceState({ q, page, source, currentView, activeListId }, '', url.toString())
+      history.replaceState({ q, page, source, filters, currentView, activeListId }, '', url.toString())
     }
   }
 
@@ -328,7 +478,8 @@
     setBusy(true)
     try {
       const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
-      const res = await fetch(`/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}${sourceParam}`)
+      const filterParam = activeFilters.size ? `&filters=${encodeURIComponent(filtersQuery())}` : ''
+      const res = await fetch(`/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}${sourceParam}${filterParam}`)
       if (!res.ok) throw new Error(`Search failed (${res.status})`)
       const data = await res.json()
       totalResults = data.total || 0
@@ -337,11 +488,30 @@
 
       resultsEl.innerHTML = ''
       if (!data.results || data.results.length === 0) {
+        const activeFilterText = activeFilters.size ? ` with filters ${Array.from(activeFilters).map(f => f.replace(/-/g, ' ')).join(', ')}` : ''
         resultsEl.innerHTML = `
-          <div class="empty">
-            <h2>No recipes found</h2>
-            <p>Try a different ingredient or recipe name.</p>
+          <div class="empty empty-search">
+            <h2>No recipes found for “${escapeHtml(q)}”${escapeHtml(activeFilterText)}</h2>
+            <p>Try one of these popular searches, or remove some filters.</p>
+            <div class="empty-actions">
+              <button class="empty-example" data-q="chocolate">🍫 Chocolate</button>
+              <button class="empty-example" data-q="chicken">🍗 Chicken</button>
+              <button class="empty-example" data-q="vegetarian">🥬 Vegetarian</button>
+              <button class="empty-example" data-q="quick dinner">⏱ Quick dinner</button>
+            </div>
+            <button id="empty-random" class="btn secondary">🎲 Surprise me</button>
           </div>`
+        resultsEl.querySelectorAll('.empty-example').forEach(btn => {
+          btn.addEventListener('click', () => {
+            qInput.value = btn.dataset.q
+            page = 1
+            doSearch({ pushHistory: true })
+          })
+        })
+        const emptyRandom = resultsEl.querySelector('#empty-random')
+        if (emptyRandom && randomBtn) {
+          emptyRandom.addEventListener('click', () => randomBtn.click())
+        }
         bindCardActions()
         syncUrl(pushHistory)
         return
@@ -350,6 +520,7 @@
       resultsEl.innerHTML = data.results.map(renderCard).join('')
       bindCardActions()
       syncUrl(pushHistory)
+      saveRecentSearch(q, filtersQuery())
       if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       console.error('[cookster] search error:', err)
@@ -372,6 +543,9 @@
     if (listId === '__favorites__') {
       ids = Lists.getFavorites()
       title = 'Favourites'
+    } else if (listId === '__want_to_try__') {
+      ids = Lists.getWantToTry()
+      title = 'Want to try'
     } else {
       const list = Lists.getList(listId)
       if (!list) return
@@ -387,10 +561,22 @@
     resultsEl.innerHTML = ''
     if (ids.length === 0) {
       resultsEl.innerHTML = `
-        <div class="empty">
+        <div class="empty empty-list">
           <h2>${escapeHtml(title)} is empty</h2>
-          <p>Save recipes to see them here.</p>
+          <p>Tap the heart or “Want to try” button on any recipe to add it here.</p>
+          <button id="empty-browse" class="btn secondary">🔎 Browse recipes</button>
         </div>`
+      const emptyBrowse = resultsEl.querySelector('#empty-browse')
+      if (emptyBrowse) {
+        emptyBrowse.addEventListener('click', () => {
+          currentView = 'search'
+          activeListId = null
+          qInput.value = ''
+          lastQuery = ''
+          page = 1
+          doSearch({ pushHistory: true })
+        })
+      }
       syncUrl(pushHistory)
       if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' })
       return
@@ -438,6 +624,18 @@
         btn.classList.toggle('active', nowFav)
         btn.setAttribute('aria-label', nowFav ? 'Remove from favourites' : 'Add to favourites')
         btn.textContent = heartIcon(nowFav)
+      })
+    })
+    resultsEl.querySelectorAll('.want-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const id = btn.dataset.id
+        const nowWant = Lists.toggleWantToTry(id)
+        btn.classList.toggle('active', nowWant)
+        btn.setAttribute('aria-label', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
+        btn.setAttribute('title', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
+        showToast(nowWant ? 'Added to Want to try' : 'Removed from Want to try')
       })
     })
   }
@@ -561,7 +759,8 @@
 
   function renderListsPanel() {
     const data = Lists.load()
-    favCountEl.textContent = data.favorites.length
+    if (favCountEl) favCountEl.textContent = data.favorites.length
+    if (wantCountEl) wantCountEl.textContent = data.wantToTry.length
     customListsEl.innerHTML = data.lists.map(list => `
       <div class="list-row" data-list-id="${list.id}">
         <div class="list-row-main">
@@ -660,21 +859,29 @@
       }
     }
 
-    mealPlanEl.innerHTML = dates.map(date => {
-      const ids = plan[date] || []
-      const items = ids.map(id => `
-        <div class="meal-item">
-          <a class="meal-title" href="/recipe/${id}">${escapeHtml(titles.get(id) || 'Recipe')}</a>
-          <button class="meal-remove" data-date="${date}" data-id="${id}" aria-label="Remove">✕</button>
-        </div>
-      `).join('')
-      return `
-        <div class="meal-day">
-          <div class="meal-date">${formatDateLabel(date)}</div>
-          <div class="meal-items">${items || '<span class="meal-empty">No meals planned</span>'}</div>
-        </div>
-      `
-    }).join('')
+    mealPlanEl.innerHTML = `
+      <div class="weekly-calendar">
+        ${dates.map(date => {
+          const ids = plan[date] || []
+          const items = ids.map(id => `
+            <div class="meal-item">
+              <a class="meal-title" href="/recipe/${id}">${escapeHtml(titles.get(id) || 'Recipe')}</a>
+              <button class="meal-remove" data-date="${date}" data-id="${id}" aria-label="Remove">✕</button>
+            </div>
+          `).join('')
+          return `
+            <div class="day-card">
+              <div class="day-card-header">
+                <span class="day-name">${formatDateLabel(date)}</span>
+              </div>
+              <div class="day-card-body">
+                ${items || '<span class="meal-empty">No meals planned</span>'}
+              </div>
+            </div>
+          `
+        }).join('')}
+      </div>
+    `
 
     mealPlanEl.querySelectorAll('.meal-remove').forEach(btn => {
       btn.addEventListener('click', () => Lists.removeMeal(btn.dataset.date, btn.dataset.id))
@@ -792,14 +999,70 @@
 
   loadRecoveryCode()
 
-  // Bind static favourites row once.
+  // Bind static favourites and want-to-try rows once.
   document.querySelector('.favorite-row')?.addEventListener('click', () => {
     showList('__favorites__', { pushHistory: true })
+  })
+  document.querySelector('.want-row')?.addEventListener('click', () => {
+    showList('__want_to_try__', { pushHistory: true })
   })
 
   if (clearBoughtBtn) {
     clearBoughtBtn.addEventListener('click', () => Lists.clearBought())
   }
+  if (dedupeShoppingBtn) {
+    dedupeShoppingBtn.addEventListener('click', () => {
+      Lists.dedupeShopping()
+      showToast('Duplicate items merged where possible')
+    })
+  }
+  if (uncheckAllShoppingBtn) {
+    uncheckAllShoppingBtn.addEventListener('click', () => Lists.uncheckAllShopping())
+  }
+  if (clearAllShoppingBtn) {
+    clearAllShoppingBtn.addEventListener('click', () => {
+      if (confirm('Clear the entire shopping list?')) Lists.clearShopping()
+    })
+  }
+  if (addMealPlanShopping3Btn) {
+    addMealPlanShopping3Btn.addEventListener('click', async () => {
+      setBusy(true)
+      try {
+        const added = await Lists.addMealPlanToShopping(3)
+        showToast(`Added ${added} ingredients from meal plan`)
+      } catch (err) {
+        showToast('Could not add meal plan ingredients')
+      } finally {
+        setBusy(false)
+      }
+    })
+  }
+  if (addMealPlanShopping7Btn) {
+    addMealPlanShopping7Btn.addEventListener('click', async () => {
+      setBusy(true)
+      try {
+        const added = await Lists.addMealPlanToShopping(7)
+        showToast(`Added ${added} ingredients from meal plan`)
+      } catch (err) {
+        showToast('Could not add meal plan ingredients')
+      } finally {
+        setBusy(false)
+      }
+    })
+  }
+
+  document.querySelectorAll('.mobile-nav-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      const action = item.dataset.action
+      if (!action) return
+      if (action === 'shopping' || action === 'mealplan' || action === 'lists') {
+        e.preventDefault()
+        openListsPanel()
+        switchTab(action === 'shopping' ? 'shopping' : action === 'mealplan' ? 'mealplan' : 'lists')
+      }
+      // search and books are normal links.
+    })
+  })
 
   function debounceSearch() {
     clearTimeout(timer)
@@ -815,6 +1078,16 @@
   qInput.addEventListener('input', () => {
     debounceSearch()
     debounceSuggestions()
+    if (qInput.value.trim()) closeRecentSearches()
+    else renderRecentSearches()
+  })
+  qInput.addEventListener('focus', () => {
+    closeSuggestions()
+    if (!qInput.value.trim()) renderRecentSearches()
+  })
+  qInput.addEventListener('blur', () => {
+    // Delay so clicks on recent items register first.
+    setTimeout(() => closeRecentSearches(), 180)
   })
   qInput.addEventListener('keydown', (e) => {
     if (suggestionsEl && suggestionsEl.classList.contains('open')) {
@@ -864,10 +1137,26 @@
   nextBtn.addEventListener('click', () => { if (page < totalPages()) { page++; doSearch({ pushHistory: true }) } })
   prevBtn.addEventListener('click', () => { if (page > 1) { page--; doSearch({ pushHistory: true }) } })
 
+  if (filterChipsEl) {
+    filterChipsEl.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const f = chip.dataset.filter
+        if (activeFilters.has(f)) activeFilters.delete(f)
+        else activeFilters.add(f)
+        updateFilterChips()
+        page = 1
+        doSearch({ pushHistory: true })
+      })
+    })
+  }
+
   // Close suggestions when clicking outside
   document.addEventListener('click', (e) => {
     if (suggestionsEl && !suggestionsEl.contains(e.target) && e.target !== qInput) {
       closeSuggestions()
+    }
+    if (recentSearchesEl && !recentSearchesEl.contains(e.target) && e.target !== qInput) {
+      closeRecentSearches()
     }
   })
 
@@ -903,9 +1192,12 @@
     const p = new URLSearchParams(location.search)
     const newQ = (p.get('q') || '').trim()
     const newSource = (p.get('source') || '').trim()
+    const newFilters = new Set((p.get('filters') || '').split(',').filter(Boolean))
     const view = p.get('view')
     const listId = p.get('list')
     if (sourceSelect) sourceSelect.value = newSource
+    activeFilters = newFilters
+    updateFilterChips()
     if (view === 'list' && listId) {
       page = 1
       qInput.value = newQ
@@ -960,6 +1252,7 @@
   loadStats()
   setInterval(loadStats, 60000)
   renderListsPanel()
+  updateFilterChips()
   const viewParam = params.get('view')
   const listParam = params.get('list')
   if (viewParam === 'list' && listParam) {

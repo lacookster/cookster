@@ -558,7 +558,83 @@ def _candidate_matches(candidate: dict, q: str) -> bool:
     return True
 
 
-def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None):
+# Dietary / style filter helpers ------------------------------------------------
+_FILTER_MEAT = {
+    'chicken', 'beef', 'pork', 'lamb', 'duck', 'turkey', 'bacon', 'ham',
+    'sausage', 'sausages', 'mince', 'meat', 'steak', 'venison', 'goose',
+    'rabbit', 'quail', 'pancetta', 'prosciutto', 'salami', 'chorizo',
+    'anchovy', 'anchovies', 'prawn', 'prawns', 'shrimp', 'fish', 'salmon',
+    'cod', 'haddock', 'tuna', 'mackerel', 'trout', 'sardine', 'sardines',
+    'mussel', 'mussels', 'clam', 'clams', 'oyster', 'oysters', 'squid',
+    'octopus', 'calamari'
+}
+_FILTER_DAIRY_EGG = {
+    'egg', 'eggs', 'milk', 'cream', 'butter', 'cheese', 'yogurt', 'yoghurt',
+    'cheddar', 'mozzarella', 'parmesan', 'feta', 'ricotta', 'brie', 'camembert',
+    'gouda', 'gruyere', 'honey'
+}
+_FILTER_GLUTEN = {
+    'flour', 'wheat', 'barley', 'rye', 'couscous', 'semolina', 'breadcrumbs',
+    'bread', 'pasta', 'noodle', 'noodles', 'spaghetti', 'macaroni', 'penne',
+    'fusilli', 'lasagne', 'pizza', 'pastry', 'croissant', 'bagel', 'baguette'
+}
+_FILTER_NUTS = {
+    'nut', 'nuts', 'almond', 'almonds', 'peanut', 'peanuts', 'cashew',
+    'cashews', 'walnut', 'walnuts', 'pecan', 'pecans', 'pistachio', 'pistachios',
+    'hazelnut', 'hazelnuts', 'macadamia', 'macadamias', 'pine nut', 'pine nuts',
+    'peanut butter', 'almond butter'
+}
+_FILTER_DESSERT = {
+    'chocolate', 'cake', 'cookie', 'cookies', 'pastry', 'pudding', 'tart',
+    'pie', 'ice cream', 'dessert', 'sweet', 'sugar', 'brownie', 'muffin',
+    'cupcake', 'cheesecake', 'biscuit', 'biscuits', 'donut', 'doughnut'
+}
+_FILTER_ONE_POT = {
+    'one pan', 'one-pot', 'one pot', 'single pan', 'single pot', 'skillet',
+    'traybake', 'sheet pan', 'baking tray', 'roasting tin', 'one tray'
+}
+
+
+def _matches_filter(candidate: dict, name: str) -> bool:
+    """Return True if candidate satisfies the named heuristic filter."""
+    title = (candidate.get('title') or '').lower()
+    ingredients = (candidate.get('ingredients') or '').lower()
+    steps = (candidate.get('steps') or '').lower()
+    full_text = title + ' ' + ingredients + ' ' + steps
+
+    if name == 'vegetarian':
+        return not any(w in full_text for w in _FILTER_MEAT)
+    if name == 'vegan':
+        return (not any(w in full_text for w in _FILTER_MEAT) and
+                not any(w in full_text for w in _FILTER_DAIRY_EGG))
+    if name == 'gluten-free':
+        # Allow if explicitly marked gluten-free; otherwise exclude gluten grains.
+        if 'gluten-free' in full_text or 'gluten free' in full_text:
+            return True
+        return not any(w in full_text for w in _FILTER_GLUTEN)
+    if name == 'nut-free':
+        # Allow if explicitly marked nut-free; otherwise exclude nuts.
+        if 'nut-free' in full_text or 'nut free' in full_text:
+            return True
+        return not any(w in full_text for w in _FILTER_NUTS)
+    if name == 'dessert':
+        return any(w in full_text for w in _FILTER_DESSERT)
+    if name == 'one-pot':
+        return any(w in steps for w in _FILTER_ONE_POT)
+    if name == 'quick':
+        # Look for explicit short cooking times in steps, or a short overall method.
+        for m in re.finditer(r'(\d+)\s*(?:min|minute|minutes|min)', steps):
+            if int(m.group(1)) <= 30:
+                return True
+        # Very short methods (≤5 steps and ≤600 chars) are likely quick.
+        step_lines = [s for s in (candidate.get('steps') or '').splitlines() if s.strip()]
+        if len(step_lines) <= 5 and len(steps) <= 600:
+            return True
+        return False
+    return True
+
+
+def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None, filters: List[str] = None):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     _ensure_schema(conn)
@@ -605,9 +681,12 @@ def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str 
         candidates = _fetch_rows(source_filter, source_params) if source_filter else _fetch_rows("")
         use_fts = False
 
-    # rank candidates with BM25, then apply positive/negative token filters.
+    # rank candidates with BM25, then apply positive/negative token and filter chips.
+    filters = filters or []
     ranked = rank_recipes(candidates, q, top_n=len(candidates) if not use_fts else limit * page)
     ranked = [c for c in ranked if _candidate_matches(c, q)]
+    for f in filters:
+        ranked = [c for c in ranked if _matches_filter(c, f)]
     total = len(ranked)
 
     # pagination
@@ -643,15 +722,17 @@ def search(q: str = Query(..., min_length=1),
            db: str = Query('cookster.db'),
            limit: int = Query(10, ge=1, le=100),
            page: int = Query(1, ge=1, le=10000),
-           source: str = Query(None)):
+           source: str = Query(None),
+           filters: str = Query(None)):
     try:
         db_path = resolve_db_path(db)
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    results, total = _query_db(db_path, q, limit, page, source=source)
-    return {'query': q, 'results': results, 'page': page, 'total': total, 'source': source}
+    filter_list = [f.strip() for f in (filters or '').split(',') if f.strip()]
+    results, total = _query_db(db_path, q, limit, page, source=source, filters=filter_list)
+    return {'query': q, 'results': results, 'page': page, 'total': total, 'source': source, 'filters': filter_list}
 
 
 @app.get('/api/sources')

@@ -38,6 +38,7 @@
           <span class="search-icon" aria-hidden="true">🔎</span>
           <input id="q" placeholder="Search recipes, ingredients, or methods…" autocomplete="off" autofocus />
           <div id="suggestions" class="suggestions" aria-hidden="true"></div>
+        <div id="recent-searches" class="recent-searches" aria-hidden="true"></div>
           <button id="go">Search</button>
         </div>
       </div>
@@ -54,6 +55,18 @@
           <span id="book-count-inline">0</span> books
         </div>
       </div>
+
+      <div class="filter-chips" id="filter-chips" aria-label="Recipe filters">
+        <button class="filter-chip" data-filter="vegetarian" aria-pressed="false">🥬 Vegetarian</button>
+        <button class="filter-chip" data-filter="vegan" aria-pressed="false">🌱 Vegan</button>
+        <button class="filter-chip" data-filter="gluten-free" aria-pressed="false">🌾 Gluten-free</button>
+        <button class="filter-chip" data-filter="nut-free" aria-pressed="false">🥜 Nut-free</button>
+        <button class="filter-chip" data-filter="quick" aria-pressed="false">⏱ Quick</button>
+        <button class="filter-chip" data-filter="dessert" aria-pressed="false">🍰 Dessert</button>
+        <button class="filter-chip" data-filter="one-pot" aria-pressed="false">🍳 One-pot</button>
+      </div>
+
+      <div id="active-filters" class="active-filters" aria-live="polite"></div>
 
       <div class="status-bar">
         <div id="count"></div>
@@ -92,6 +105,10 @@
               <span class="list-name">❤️ Favourites</span>
               <span class="list-count" id="fav-count">0</span>
             </div>
+            <div class="list-row want-row" data-list-id="__want_to_try__">
+              <span class="list-name">🍽 Want to try</span>
+              <span class="list-count" id="want-count">0</span>
+            </div>
           </section>
           <section class="list-section custom-lists">
             <h3>Custom lists</h3>
@@ -109,8 +126,17 @@
               <h3>Shopping list</h3>
               <button id="clear-bought" class="icon-btn" title="Remove bought items">Clear bought</button>
             </div>
+            <div class="shopping-batch-actions">
+              <button id="dedupe-shopping" class="btn secondary small">🧲 Merge duplicates</button>
+              <button id="uncheck-all-shopping" class="btn secondary small">⬜ Uncheck all</button>
+              <button id="clear-all-shopping" class="btn danger small">🗑 Clear all</button>
+            </div>
+            <div class="shopping-meal-plan-actions">
+              <button id="add-meal-plan-shopping-3" class="btn secondary small">📅 Add next 3 days</button>
+              <button id="add-meal-plan-shopping-7" class="btn secondary small">📅 Add next 7 days</button>
+            </div>
             <div id="shopping-list"></div>
-            <div class="shopping-empty empty-lists">No items yet. Add ingredients from a recipe.</div>
+            <div class="shopping-empty empty-lists">No items yet. Add ingredients from a recipe, or pull them from your meal plan.</div>
           </section>
         </div>
 
@@ -167,6 +193,14 @@
       </div>
     </aside>
     <div id="lists-backdrop" class="lists-backdrop"></div>
+
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <a href="/" class="mobile-nav-item" data-action="search">🔎 Search</a>
+      <a href="/books" class="mobile-nav-item" data-action="books">📚 Books</a>
+      <button type="button" class="mobile-nav-item" data-action="mealplan">📅 Meal</button>
+      <button type="button" class="mobile-nav-item" data-action="shopping">🛒 Shop</button>
+      <button type="button" class="mobile-nav-item" data-action="lists">📝 Lists</button>
+    </nav>
 
     <script src="/static/lists.js" defer></script>
     <script src="/static/app.js" defer></script>
