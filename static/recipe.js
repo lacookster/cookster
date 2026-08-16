@@ -254,9 +254,13 @@
     }
   }
 
-  // Servings scaler --------------------------------------------------------
+  // Servings scaler + unit converter ----------------------------------------
   const scaleInput = document.getElementById('scale-input')
   const ingredientListEl = document.getElementById('ingredient-list')
+  const unitMetricBtn = document.getElementById('unit-metric')
+  const unitImperialBtn = document.getElementById('unit-imperial')
+  const unitResetBtn = document.getElementById('unit-reset')
+  let currentUnitMode = 'metric'
 
   const FRACTIONS = {
     '\u00bc': 0.25, '\u00bd': 0.5, '\u00be': 0.75,
@@ -297,16 +301,85 @@
     return (parsed.prefix + ' ' + newVal + ' ' + parsed.suffix).replace(/\s+/g, ' ').trim()
   }
 
+  const IMPERIAL_CONVERSIONS = {
+    g: { factor: 0.03527, unit: 'oz' },
+    kg: { factor: 2.2046, unit: 'lb' },
+    ml: { factor: 0.0338, unit: 'fl oz' },
+    l: { factor: 1.057, unit: 'qt' },
+  }
+
+  function convertToImperial(line) {
+    return line.replace(/\b(\d+(?:\.\d+)?)\s*(kg|ml|g|l)\b/gi, (match, qty, unit) => {
+      const info = IMPERIAL_CONVERSIONS[unit.toLowerCase()]
+      if (!info) return match
+      const val = parseFloat(qty) * info.factor
+      const rounded = Math.round(val * 10) / 10
+      return `${rounded} ${info.unit}`
+    })
+  }
+
+  function displayLine(metricLine) {
+    if (currentUnitMode === 'imperial') {
+      return convertToImperial(metricLine)
+    }
+    return metricLine
+  }
+
+  function setUnitMode(mode) {
+    currentUnitMode = mode
+    const metricActive = mode === 'metric'
+    if (unitMetricBtn) {
+      unitMetricBtn.classList.toggle('active', metricActive)
+      unitMetricBtn.setAttribute('aria-pressed', String(metricActive))
+    }
+    if (unitImperialBtn) {
+      unitImperialBtn.classList.toggle('active', !metricActive)
+      unitImperialBtn.setAttribute('aria-pressed', String(!metricActive))
+    }
+    ingredientListEl.querySelectorAll('li').forEach(li => {
+      const span = li.querySelector('.ingredient-check span')
+      const metricLine = li.dataset.metric || li.dataset.original || (span ? span.textContent : li.textContent)
+      const display = displayLine(metricLine)
+      if (span) span.textContent = display
+      else li.textContent = display
+    })
+  }
+
   function applyScale() {
     if (!ingredientListEl || !scaleInput) return
     const factor = parseFloat(scaleInput.value) || 1
     ingredientListEl.querySelectorAll('li').forEach(li => {
-      const span = li.querySelector('.ingredient-check span')
-      const original = li.dataset.original || (span ? span.textContent : li.textContent)
+      const original = li.dataset.original || (li.querySelector('.ingredient-check span') ? li.querySelector('.ingredient-check span').textContent : li.textContent)
       if (!li.dataset.original) li.dataset.original = original
-      const scaled = scaleLine(original, factor)
-      if (span) span.textContent = scaled
-      else li.textContent = scaled
+      const metric = scaleLine(original, factor)
+      li.dataset.metric = metric
+      const span = li.querySelector('.ingredient-check span')
+      const display = displayLine(metric)
+      if (span) span.textContent = display
+      else li.textContent = display
+    })
+  }
+
+  function initIngredientMetrics() {
+    if (!ingredientListEl) return
+    ingredientListEl.querySelectorAll('li').forEach(li => {
+      const span = li.querySelector('.ingredient-check span')
+      const text = li.dataset.original || (span ? span.textContent : li.textContent)
+      if (!li.dataset.original) li.dataset.original = text
+      if (!li.dataset.metric) li.dataset.metric = text
+    })
+  }
+
+  initIngredientMetrics()
+
+  if (unitMetricBtn) unitMetricBtn.addEventListener('click', () => setUnitMode('metric'))
+  if (unitImperialBtn) unitImperialBtn.addEventListener('click', () => setUnitMode('imperial'))
+  if (unitResetBtn) {
+    unitResetBtn.addEventListener('click', () => {
+      currentUnitMode = 'metric'
+      if (scaleInput) scaleInput.value = 1
+      setUnitMode('metric')
+      applyScale()
     })
   }
 
@@ -591,6 +664,8 @@
       })
     })
   }
+
+  function parseStepTimes(text) {
     const times = []
     // Match patterns like "25 minutes", "1 hour", "1 hour 30 minutes", "30 min", "2 hr"
     const pattern = /(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|hr?s?|hours?)/gi
@@ -890,6 +965,29 @@
     })
   }
 
+  // Nutrition estimate -----------------------------------------------------
+  async function loadNutrition() {
+    const badge = document.getElementById('nutrition-badge')
+    if (!badge) return
+    const db = badge.dataset.db || 'cookster.db'
+    try {
+      const res = await fetch(`/api/nutrition/${encodeURIComponent(recipeId)}?db=${encodeURIComponent(db)}`)
+      if (!res.ok) throw new Error('nutrition failed')
+      const data = await res.json()
+      if (data.estimated_calories && data.estimated_calories > 0) {
+        badge.textContent = `🔥 ${data.estimated_calories} kcal / serving`
+        badge.classList.remove('empty')
+      } else {
+        badge.textContent = 'No nutrition estimate available'
+        badge.classList.add('empty')
+      }
+    } catch (err) {
+      console.error('[cookster] nutrition error:', err)
+      badge.textContent = 'No nutrition estimate available'
+      badge.classList.add('empty')
+    }
+  }
+
   loadRelated()
   updateFav()
   updateWant()
@@ -897,5 +995,6 @@
   renderCooked()
   renderSubstitution()
   initIngredientChecks()
+  loadNutrition()
   Lists.addRecentView(recipeId)
 })()

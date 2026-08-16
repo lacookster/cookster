@@ -664,6 +664,20 @@ def _matches_filter(candidate: dict, name: str) -> bool:
     return True
 
 
+# Curated collections shown on the /collections page. Each card links to the
+# existing search with a keyword query and/or heuristic filter.
+CURATED_COLLECTIONS = [
+    {'name': 'Comfort Food', 'icon': '🍲', 'q': 'comfort', 'filters': ''},
+    {'name': 'Date Night', 'icon': '🥂', 'q': 'dinner', 'filters': ''},
+    {'name': 'Summer BBQ', 'icon': '🔥', 'q': 'barbecue', 'filters': ''},
+    {'name': 'Quick Weeknight', 'icon': '⚡', 'q': '', 'filters': 'quick'},
+    {'name': 'Batch Cook', 'icon': '🍲', 'q': 'casserole', 'filters': ''},
+    {'name': 'One-Pot Wonders', 'icon': '🍳', 'q': '', 'filters': 'one-pot'},
+    {'name': 'Vegetarian Favourites', 'icon': '🥬', 'q': '', 'filters': 'vegetarian'},
+    {'name': 'Sweet Tooth', 'icon': '🍰', 'q': '', 'filters': 'dessert'},
+]
+
+
 def _levenshtein(a: str, b: str) -> int:
     """Return the Levenshtein distance between two strings."""
     if len(a) < len(b):
@@ -877,6 +891,14 @@ def ui(request: Request):
 def offline_page(request: Request):
     tmpl = templates.env.get_template('offline.html')
     content = tmpl.render(request=request)
+    return HTMLResponse(content)
+
+
+@app.get('/collections', response_class=HTMLResponse)
+def collections_page(request: Request):
+    """Render a curated collections page with links to pre-filtered searches."""
+    tmpl = templates.env.get_template('collections.html')
+    content = tmpl.render(request=request, collections=CURATED_COLLECTIONS)
     return HTMLResponse(content)
 
 
@@ -1244,6 +1266,155 @@ def related_recipes(stable_id: str, db: str = Query('cookster.db')):
 
     conn.close()
     return {'same_book': same_book, 'similar': similar}
+
+
+# Approximate nutrition lookup. Values are kcal per 100 g (or per unit for eggs).
+_NUTRITION_CALORIES = {
+    'chicken': 165, 'beef': 250, 'pork': 240, 'lamb': 250, 'duck': 340,
+    'turkey': 135, 'bacon': 540, 'ham': 145, 'sausage': 300, 'mince': 250,
+    'salmon': 200, 'fish': 150, 'cod': 80, 'haddock': 90, 'tuna': 130,
+    'prawn': 100, 'prawns': 100, 'shrimp': 100,
+    'rice': 130, 'pasta': 130, 'noodle': 130, 'noodles': 130, 'spaghetti': 130,
+    'bread': 250, 'flour': 360, 'sugar': 400, 'honey': 300,
+    'potato': 80, 'potatoes': 80, 'carrot': 40, 'carrots': 40, 'onion': 40,
+    'onions': 40, 'tomato': 20, 'tomatoes': 20, 'garlic': 150, 'ginger': 80,
+    'lemon': 30, 'orange': 50, 'apple': 50, 'apples': 50, 'banana': 90, 'bananas': 90,
+    'mushroom': 25, 'mushrooms': 25, 'spinach': 25, 'peas': 80, 'beans': 130,
+    'chickpea': 160, 'chickpeas': 160, 'lentil': 110, 'lentils': 110,
+    'egg': 70, 'eggs': 70, 'milk': 60, 'cheese': 400, 'butter': 700,
+    'oil': 900, 'olive oil': 900, 'yogurt': 60, 'yoghurt': 60, 'cream': 340,
+    'coconut milk': 230, 'stock': 10, 'water': 0, 'salt': 0, 'pepper': 0,
+    'chocolate': 550, 'cocoa': 230, 'vanilla': 0, 'cinnamon': 0, 'nutmeg': 0,
+    'oregano': 0, 'basil': 0, 'parsley': 0, 'coriander': 0, 'cumin': 0,
+    'paprika': 0, 'chilli': 0, 'chili': 0,
+}
+
+_FRACTION_CHARS = {
+    '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1/3, '⅔': 2/3,
+    '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875,
+}
+
+_UNIT_CONVERSIONS = {
+    'g': 1.0, 'kg': 1000.0, 'mg': 0.001,
+    'ml': 1.0, 'l': 1000.0, 'litre': 1000.0, 'liter': 1000.0,
+    'cup': 240.0, 'cups': 240.0,
+    'tbsp': 15.0, 'tsp': 5.0,
+    'oz': 28.35, 'lb': 453.6, 'lbs': 453.6,
+}
+
+
+def _parse_fraction_quantity(text: str):
+    """Return a decimal quantity for the first number/fraction in text, or None."""
+    for char, val in _FRACTION_CHARS.items():
+        if char in text:
+            idx = text.index(char)
+            before = text[:idx].strip()
+            m = re.search(r'(\d+)\s*$', before)
+            whole = int(m.group(1)) if m else 0
+            return whole + val
+    m = re.search(r'(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+))?', text)
+    if not m:
+        return None
+    val = float(m.group(1))
+    if m.group(2):
+        val /= float(m.group(2))
+    return val
+
+
+def _parse_unit(text: str) -> str:
+    """Return the first known unit found in the ingredient line, or ''."""
+    pattern = re.compile(r'\b(litre|liter|kg|ml|g|l|cups|cup|tbsp|tsp|oz|lb|lbs)\b', re.I)
+    m = pattern.search(text)
+    if not m:
+        return ''
+    return m.group(1).lower()
+
+
+def _find_ingredient(text: str) -> str:
+    """Return the first known ingredient keyword found in the line, or ''."""
+    lower = text.lower()
+    # Prefer longer matches first (e.g. 'olive oil' before 'oil').
+    for ingredient in sorted(_NUTRITION_CALORIES, key=len, reverse=True):
+        if re.search(r'\b' + re.escape(ingredient) + r'\b', lower):
+            return ingredient
+    return ''
+
+
+def _calories_for_quantity(qty: float, unit: str, per_100g: float, ingredient: str) -> float:
+    """Estimate calories from a quantity, unit, and kcal-per-100-g value."""
+    if ingredient in ('egg', 'eggs'):
+        if unit in ('', 'unit', 'units', 'pc', 'pcs', 'piece', 'pieces'):
+            return qty * per_100g
+        if unit in _UNIT_CONVERSIONS:
+            return qty * _UNIT_CONVERSIONS[unit] * per_100g / 100
+        return 0
+    if unit in _UNIT_CONVERSIONS:
+        return qty * _UNIT_CONVERSIONS[unit] * per_100g / 100
+    # Unknown unit: assume a modest default serving of 100 g.
+    return per_100g
+
+
+def _parse_servings(serves: str) -> int:
+    """Extract a number from the serves text; default to 4 if unclear."""
+    if not serves:
+        return 4
+    m = re.search(r'(\d+)', str(serves))
+    if m:
+        n = int(m.group(1))
+        return n if n > 0 else 1
+    return 4
+
+
+def estimate_recipe_calories(recipe: dict) -> int:
+    """Best-effort estimate of calories per serving for a recipe."""
+    ingredients = (recipe.get('ingredients') or '').split('\n')
+    total = 0.0
+    for line in ingredients:
+        line = line.strip()
+        if not line:
+            continue
+        ingredient = _find_ingredient(line)
+        if not ingredient:
+            continue
+        per_100 = _NUTRITION_CALORIES.get(ingredient, 0)
+        if per_100 <= 0:
+            continue
+        qty = _parse_fraction_quantity(line)
+        unit = _parse_unit(line)
+        if qty is None:
+            # No quantity found: assume a small default for countable items or 100 g.
+            if ingredient in ('egg', 'eggs'):
+                qty = 1
+            else:
+                qty = 100
+                unit = 'g'
+        total += _calories_for_quantity(qty, unit, per_100, ingredient)
+    if total <= 0:
+        return 0
+    servings = _parse_servings(recipe.get('serves', ''))
+    return round(total / servings)
+
+
+@app.get('/api/nutrition/{recipe_id}')
+def nutrition_estimate(recipe_id: str, db: str = Query('cookster.db')):
+    """Return an approximate calorie estimate per serving for a recipe."""
+    try:
+        db_path = resolve_db_path(db)
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
+    if not os.path.exists(db_path):
+        return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
+    conn = sqlite3.connect(db_path)
+    _ensure_schema(conn)
+    recipe = _lookup_recipe(conn, recipe_id)
+    conn.close()
+    if not recipe:
+        return JSONResponse({'error': 'recipe not found'}, status_code=404)
+    cals = estimate_recipe_calories(recipe)
+    return JSONResponse({
+        'estimated_calories': cals,
+        'note': 'approximate',
+    })
 
 
 @app.get('/api/recipes-by-source')

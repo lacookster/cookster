@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Collections | Cookster</title>
+    <link rel="icon" type="image/jpeg" href="/static/cookster-logo.jpg">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="container">
+      <header class="top">
+        <a class="brand" href="/">
+          <img src="/static/cookster-logo.jpg" alt="Cookster" class="logo-img">
+          <div>
+            <h1>Cook<span>ster</span></h1>
+            <p>Curated collections</p>
+          </div>
+        </a>
+        <div class="header-actions">
+          <button id="lists-toggle" class="theme-toggle" aria-label="My lists">📝 My Lists</button>
+          <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
+          <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
+        </div>
+      </header>
+
+      <a class="back-link" href="/">← Back to search</a>
+
+      <div class="hero" style="margin-bottom:18px">
+        <h2 class="hero-title">Collections</h2>
+        <p class="hero-subtitle">Hand-picked recipe collections to inspire your next meal.</p>
+      </div>
+
+      <div class="collections-grid">
+        {% for collection in collections %}
+          <a class="card collection-card" href="/?q={{ collection.q | urlencode }}&filters={{ collection.filters | urlencode }}">
+            <div class="collection-icon">{{ collection.icon }}</div>
+            <div class="collection-name">{{ collection.name }}</div>
+            <div class="collection-action">Explore →</div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <aside id="lists-panel" class="lists-panel" aria-hidden="true">
+      <div class="lists-panel-header">
+        <h2>My Lists</h2>
+        <button id="lists-close" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="lists-panel-body">
+        <section class="list-section">
+          <div class="list-row favorite-row" data-list-id="__favorites__">
+            <span class="list-name">❤️ Favourites</span>
+            <span class="list-count" id="fav-count">0</span>
+          </div>
+          <div class="list-row want-row" data-list-id="__want_to_try__">
+            <span class="list-name">🍽 Want to try</span>
+            <span class="list-count" id="want-count">0</span>
+          </div>
+        </section>
+        <section class="list-section custom-lists">
+          <h3>Custom lists</h3>
+          <div id="custom-lists"></div>
+          <form id="new-list-form" class="new-list-form">
+            <input type="text" id="new-list-name" placeholder="New list name" autocomplete="off" />
+            <button type="submit">Add</button>
+          </form>
+        </section>
+      </div>
+    </aside>
+    <div id="lists-backdrop" class="lists-backdrop"></div>
+
+    <script src="/static/lists.js" defer></script>
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        (() => {
+          const listsPanel = document.getElementById('lists-panel')
+          const listsBackdrop = document.getElementById('lists-backdrop')
+          document.getElementById('lists-toggle').addEventListener('click', () => {
+            listsPanel.classList.add('open')
+            listsBackdrop.classList.add('open')
+          })
+          document.getElementById('lists-close').addEventListener('click', () => {
+            listsPanel.classList.remove('open')
+            listsBackdrop.classList.remove('open')
+          })
+          listsBackdrop.addEventListener('click', () => {
+            listsPanel.classList.remove('open')
+            listsBackdrop.classList.remove('open')
+          })
+
+          document.getElementById('theme').addEventListener('click', () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+            const next = isDark ? 'light' : 'dark'
+            document.documentElement.setAttribute('data-theme', next)
+            localStorage.setItem('theme', next)
+          })
+          const saved = localStorage.getItem('theme')
+          if (saved) document.documentElement.setAttribute('data-theme', saved)
+        })()
+      })
+    </script>
+  </body>
+</html>

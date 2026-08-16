@@ -49,7 +49,7 @@
             </div>
             <h1>{{ recipe.title }}</h1>
             <div id="recipe-rating-display" class="recipe-rating-display"></div>
-            {% if serves %}<div class="recipe-serves">🍽 {{ serves }}</div>{% endif %}
+            {% if serves %}<div class="recipe-serves">🍽 {{ serves }} <span id="nutrition-badge" class="nutrition-badge" data-recipe-id="{{ recipe.stable_id }}" data-db="{{ request.query_params.get('db', 'cookster.db')|urlencode }}">Loading…</span></div>{% endif %}
             <div class="recipe-actions-row">
               <button id="recipe-want" class="want-btn" data-id="{{ recipe.stable_id }}" aria-label="Add to Want to try" title="Add to Want to try">🍽</button>
               <button id="recipe-fav" class="fav-btn" data-id="{{ recipe.stable_id }}" aria-label="Add to favourites">♡</button>
@@ -72,15 +72,22 @@
           <div class="panel ingredients-panel">
             <div class="ingredients-header">
               <h2>Ingredients</h2>
-              <div class="scaler">
-                <label for="scale-input">Scale</label>
-                <input type="number" id="scale-input" value="1" min="0.25" step="0.25" aria-label="Scale ingredients">
-                <span>×</span>
-                <div class="scale-presets">
-                  <button type="button" class="scale-preset" data-scale="0.5">½</button>
-                  <button type="button" class="scale-preset" data-scale="1">1×</button>
-                  <button type="button" class="scale-preset" data-scale="2">2×</button>
-                  <button type="button" class="scale-preset" data-scale="4">4×</button>
+              <div class="ingredient-tools">
+                <div class="unit-toggle" role="group" aria-label="Unit converter">
+                  <button type="button" id="unit-metric" class="unit-toggle-btn active" aria-pressed="true">Metric</button>
+                  <button type="button" id="unit-imperial" class="unit-toggle-btn" aria-pressed="false">Imperial</button>
+                  <button type="button" id="unit-reset" class="unit-toggle-btn reset" aria-label="Reset units">Reset</button>
+                </div>
+                <div class="scaler">
+                  <label for="scale-input">Scale</label>
+                  <input type="number" id="scale-input" value="1" min="0.25" step="0.25" aria-label="Scale ingredients">
+                  <span>×</span>
+                  <div class="scale-presets">
+                    <button type="button" class="scale-preset" data-scale="0.5">½</button>
+                    <button type="button" class="scale-preset" data-scale="1">1×</button>
+                    <button type="button" class="scale-preset" data-scale="2">2×</button>
+                    <button type="button" class="scale-preset" data-scale="4">4×</button>
+                  </div>
                 </div>
               </div>
             </div>

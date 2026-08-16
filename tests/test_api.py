@@ -324,6 +324,33 @@ def test_related_recipes_endpoint():
     os.remove(dbpath)
 
 
+def test_nutrition_endpoint():
+    fd, dbpath = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    _set_db_dir(dbpath)
+    conn = sqlite3.connect(dbpath)
+    c = conn.cursor()
+    c.execute('CREATE TABLE recipes (id INTEGER PRIMARY KEY, title TEXT, ingredients TEXT, steps TEXT, source TEXT, file_path TEXT, serves TEXT)')
+    c.execute('INSERT INTO recipes (title, ingredients, steps, source, file_path, serves) VALUES (?,?,?,?,?,?)',
+              ('Chicken Rice Bowl', '200 g chicken\n100 g rice\n1 tbsp oil\n1 egg', 'cook', 'book', '', 'Serves 2'))
+    conn.commit()
+    conn.close()
+
+    client = TestClient(app)
+    resp = client.get('/api/nutrition/1', params={'db': os.path.basename(dbpath)})
+    assert resp.status_code == 200
+    j = resp.json()
+    assert j['note'] == 'approximate'
+    assert j['estimated_calories'] > 0
+
+    # Missing recipe should 404.
+    resp2 = client.get('/api/nutrition/999', params={'db': os.path.basename(dbpath)})
+    assert resp2.status_code == 404
+
+    _restore_db_dir()
+    os.remove(dbpath)
+
+
 def test_stats_endpoint():
     fd, dbpath = tempfile.mkstemp(suffix='.db')
     os.close(fd)

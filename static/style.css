@@ -1997,6 +1997,49 @@ header.top {
 }
 .ingredients-header h2 { margin: 0; }
 
+.ingredient-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.unit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 50px;
+  padding: 4px;
+}
+.unit-toggle-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 50px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.unit-toggle-btn:hover {
+  color: var(--text);
+}
+.unit-toggle-btn.active {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.unit-toggle-btn.reset {
+  color: var(--accent);
+}
+.unit-toggle-btn.reset:hover {
+  background: var(--accent-soft);
+}
+
 .scaler {
   display: inline-flex;
   align-items: center;
@@ -2202,6 +2245,27 @@ header.top {
   margin-bottom: 10px;
 }
 
+.nutrition-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 3px 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 50px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  vertical-align: middle;
+}
+.nutrition-badge.empty {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 /* Skeleton loaders */
 .skeleton {
   background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface) 50%, var(--surface-2) 75%);
@@ -2242,7 +2306,7 @@ textarea:focus-visible {
   left: 0;
   right: 0;
   display: none;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   background: var(--surface);
   border-top: 1px solid var(--border);
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.08);
@@ -2718,5 +2782,56 @@ textarea:focus-visible {
   max-width: 520px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* Curated collections page */
+.collections-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  animation: fadeIn 0.35s ease;
+}
+
+@media (min-width: 640px) {
+  .collections-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 980px) {
+  .collections-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+.collection-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 24px;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--surface);
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+.collection-card:hover {
+  transform: translateY(-5px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+.collection-icon {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 16px;
+}
+.collection-name {
+  font-size: 1.15rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+.collection-action {
+  font-size: 0.9rem;
+  color: var(--accent);
+  font-weight: 700;
+  margin-top: auto;
+  padding-top: 12px;
 }
 
