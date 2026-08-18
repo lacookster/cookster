@@ -3653,6 +3653,264 @@ def _extract_cool_beans_recipes_with_image(soup: BeautifulSoup, epub_path: str, 
     return recipes
 
 
+def _extract_first_generation_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Frankie Gaw's 'First Generation'.
+
+    Recipes are marked by h3 tags with an 'rt' class (rt or rt-alt). Story
+    essays use plain h3 headings and are ignored. Uses classes: rhnf (headnote),
+    ry (yield/serves), rilh (ingredient subhead), ril (ingredient),
+    rpf/rp (steps), and rst/rst2/rst-alt (Chinese titles) which we skip.
+    """
+    recipes = []
+    cur = None
+
+    def _new(title: str):
+        return {
+            'title': title,
+            'ingredients': [],
+            'steps': [],
+            'serves': '',
+            'source': os.path.basename(epub_path),
+            'file_path': epub_path,
+            'image': '',
+        }
+
+    def _finalize():
+        nonlocal cur
+        if cur and len(cur['ingredients']) >= 2 and len(cur['steps']) >= 1:
+            cur['ingredients'] = '\n'.join(cur['ingredients']).strip()
+            cur['steps'] = '\n'.join(cur['steps']).strip()
+            cur['serves'] = cur['serves'].strip()
+            recipes.append(cur)
+        cur = None
+
+    body = soup.body or soup
+    for elem in body.find_all(['h3', 'p', 'h4', 'h5']):
+        cls = elem.get('class', []) or []
+        cls_set = set(cls)
+        text = _normalize_whitespace(elem.get_text(' ', strip=True))
+        if not text:
+            continue
+
+        # Recipe titles live in h3.rt / h3.rt-alt. Plain h3.h3 are essays.
+        if elem.name == 'h3' and cls_set & {'rt', 'rt-alt'}:
+            _finalize()
+            cur = _new(text)
+            continue
+
+        if cur is None:
+            continue
+
+        if cls_set & {'rhnf', 'rhn'}:
+            continue
+        if 'ry' in cls_set:
+            cur['serves'] += ' ' + text
+            continue
+        if 'rilh' in cls_set:
+            cur['ingredients'].append('--- ' + text)
+            continue
+        if 'ril' in cls_set:
+            cur['ingredients'].append(text)
+            continue
+        if cls_set & {'rpf', 'rp'}:
+            cur['steps'].append(text)
+            continue
+        # Notes/tips after steps
+        if cls_set & {'rnh', 'rn'}:
+            continue
+        # Chinese titles/subtitles are decorative
+        if cls_set & {'rst', 'rst2', 'rst-alt', 'rst2-alt'}:
+            continue
+
+    _finalize()
+    return recipes
+
+
+def _extract_first_generation_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_first_generation_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_into_vietnamese_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Andrea Nguyen's 'Into the Vietnamese Kitchen'.
+
+    Each recipe has an English title in h2.Header_RecipeA and a Vietnamese
+    title in the following h2.Header_RecipeB. Ingredients use p.hanging (often
+    wrapped in div.hanging), steps use p.extract, and the yield line is
+    p.nonindent1.
+    """
+    recipes = []
+    body = soup.body or soup
+
+    title_tags = body.find_all('h2', class_='Header_RecipeA')
+    for title_tag in title_tags:
+        title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+        if not title:
+            continue
+
+        # Append Vietnamese title if it immediately follows.
+        next_sib = title_tag.find_next_sibling()
+        if next_sib and next_sib.name == 'h2' and 'Header_RecipeB' in (next_sib.get('class') or []):
+            viet = _normalize_whitespace(next_sib.get_text(' ', strip=True))
+            if viet and viet != title:
+                title = f"{title} - {viet}"
+
+        ingredients = []
+        steps = []
+        serves = ''
+
+        for sib in title_tag.find_next_siblings():
+            if sib.name == 'h2' and 'Header_RecipeA' in (sib.get('class') or []):
+                break
+            if not sib.name:
+                continue
+            cls = sib.get('class', []) or []
+            cls_set = set(cls)
+            text = _normalize_whitespace(sib.get_text(' ', strip=True))
+            if not text:
+                continue
+
+            # Yield line
+            if 'nonindent1' in cls_set:
+                serves += ' ' + text
+                continue
+            # Ingredient lines, often wrapped in div.hanging
+            if 'hanging' in cls_set:
+                # Prefer structured paragraphs inside the wrapper.
+                inner = sib.find_all('p', class_='hanging')
+                if inner:
+                    for p in inner:
+                        pt = _normalize_whitespace(p.get_text(' ', strip=True))
+                        if not pt:
+                            continue
+                        if pt.isupper() and len(pt) < 80:
+                            ingredients.append('--- ' + pt)
+                        else:
+                            ingredients.append(pt)
+                else:
+                    if text.isupper() and len(text) < 80:
+                        ingredients.append('--- ' + text)
+                    else:
+                        ingredients.append(text)
+                continue
+            # Numbered steps
+            if 'extract' in cls_set:
+                steps.append(text)
+                continue
+            # Notes and asides
+            if cls_set & {'nonindent', 'indent', 'center'}:
+                continue
+            if sib.name in ('h4', 'h5'):
+                continue
+
+        if len(ingredients) >= 2 and len(steps) >= 1:
+            recipes.append({
+                'title': title,
+                'ingredients': '\n'.join(ingredients).strip(),
+                'steps': '\n'.join(steps).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': '',
+                'serves': serves.strip(),
+            })
+    return recipes
+
+
+def _extract_into_vietnamese_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_into_vietnamese_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_good_bite_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from 'The Good Bite's High Protein Meal Prep'.
+
+    Recipes use h2.rec_head for titles, li.ingred for ingredients,
+    h5.ingredient_header for ingredient subheadings, p.method/p.method1 for
+    steps, and p.prot_txt1 for the yield/serving line. Ingredients and steps
+    are nested inside section.sidebar_wrapper and section.maincontent_wrapper,
+    so we walk all descendants between consecutive recipe titles.
+    """
+    recipes = []
+    body = soup.body or soup
+
+    title_tags = body.find_all('h2', class_='rec_head')
+    n = len(title_tags)
+    for i, title_tag in enumerate(title_tags):
+        title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+        if not title:
+            continue
+
+        next_title = title_tags[i + 1] if i + 1 < n else None
+        ingredients = []
+        steps = []
+        serves = ''
+
+        for elem in title_tag.find_all_next():
+            if elem.name == 'h2' and 'rec_head' in (elem.get('class') or []):
+                break
+            if not elem.name:
+                continue
+            text = _normalize_whitespace(elem.get_text(' ', strip=True))
+            if not text:
+                continue
+            cls = elem.get('class', []) or []
+            cls_set = set(cls)
+
+            if 'prot_txt1' in cls_set:
+                serves += ' ' + text
+                continue
+            if 'rec_intro' in cls_set or 'prot_txt' in cls_set:
+                continue
+            if 'ingredient_header' in cls_set:
+                ingredients.append('--- ' + text)
+                continue
+            if 'ingred' in cls_set:
+                ingredients.append(text)
+                continue
+            if elem.name == 'li' and 'ingred' in cls_set:
+                ingredients.append(text)
+                continue
+            if cls_set & {'method', 'method1'}:
+                steps.append(text)
+                continue
+
+        if len(ingredients) >= 2 and len(steps) >= 1:
+            recipes.append({
+                'title': title,
+                'ingredients': '\n'.join(ingredients).strip(),
+                'steps': '\n'.join(steps).strip(),
+                'source': os.path.basename(epub_path),
+                'file_path': epub_path,
+                'image': '',
+                'serves': serves.strip(),
+            })
+    return recipes
+
+
+def _extract_good_bite_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_good_bite_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_image_only_book_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Placeholder for books that are page-scanned images with no extractable text.
+
+    Returning an empty list prevents generic extractors from inventing bogus
+    recipes out of the document outline or caption text.
+    """
+    return []
+
+
+def _extract_image_only_book_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    return []
+
+
 def _extract_jerusalem_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
     """Extract recipes from Yotam Ottolenghi's 'Jerusalem'.
 
@@ -3913,6 +4171,11 @@ register_extractor(_source_predicate('appetites'), _extract_appetites_recipes_wi
 register_extractor(_source_predicate('australian food'), _extract_australian_food_recipes_with_image, 'australian food')
 register_extractor(_source_predicate('community'), _extract_community_salad_recipes_with_image, 'community salad')
 register_extractor(_source_predicate('cool beans'), _extract_cool_beans_recipes_with_image, 'cool beans')
+register_extractor(_source_predicate('first generation'), _extract_first_generation_recipes_with_image, 'first generation')
+register_extractor(_source_predicate('into the vietnamese kitchen'), _extract_into_vietnamese_recipes_with_image, 'into the vietnamese kitchen')
+register_extractor(_source_predicate('good bite'), _extract_good_bite_recipes_with_image, 'good bite')
+register_extractor(_source_predicate('new kitchen'), _extract_image_only_book_recipes_with_image, 'new kitchen')
+register_extractor(_source_predicate('forest feast'), _extract_image_only_book_recipes_with_image, 'forest feast')
 register_extractor(_source_predicate('nopalito'), _extract_nopalito_recipes_with_image, 'nopalito')
 register_extractor(_source_predicate('jerusalem'), _extract_jerusalem_recipes_with_image, 'jerusalem')
 register_extractor(_always_true_predicate, _extract_paragraph_recipes_with_image, 'paragraph')
