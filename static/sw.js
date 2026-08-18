@@ -1,6 +1,6 @@
 /* Cookster service worker — Phase 6 offline support */
 
-const CACHE_VERSION = 1
+const CACHE_VERSION = 2
 const STATIC_CACHE = `cookster-static-v${CACHE_VERSION}`
 const PAGES_CACHE = `cookster-pages-v${CACHE_VERSION}`
 

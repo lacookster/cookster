@@ -4349,7 +4349,7 @@ def _image_path_to_url(path: str) -> str:
 
 
 _DECORATIVE_IMAGE_BASENAMES = {
-    'vector.png', 'vector.jpg', 'line.png', 'line.jpg',
+    'vector.png', 'vector.jpg', 'line.png', 'line.jpg', 'line2.jpg',
     'decoration.png', 'decoration.jpg', 'decor.png', 'decor.jpg',
     'spacer.png', 'spacer.gif', 'blank.png', 'blank.gif',
 }

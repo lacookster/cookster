@@ -1508,8 +1508,12 @@ def books_list(request: Request, db: str = Query('cookster.db')):
         if not raw or raw in seen:
             continue
         seen.add(raw)
-        json_path = os.path.join(recipes_dir, f"{_slug_for_path(raw)}.json")
-        added_at = os.path.getmtime(json_path) if os.path.exists(json_path) else 0.0
+        # Use the source file's mtime as the "added" date; this survives
+        # JSON regenerations and reflects when the book was dropped into books/.
+        src_path = os.path.join(BOOKS_ADDED_DIR, raw)
+        if not os.path.exists(src_path):
+            src_path = os.path.join(BOOKS_DIR, raw)
+        added_at = os.path.getmtime(src_path) if os.path.exists(src_path) else 0.0
         books.append({
             'raw': raw,
             'clean': _clean_source(raw),
@@ -1555,13 +1559,15 @@ def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int =
     except sqlite3.OperationalError:
         pass
     conn.close()
-    recipes_dir = os.path.join(DB_DIR, 'data', 'recipes')
     books = []
     for raw, count in rows:
         if not raw:
             continue
-        json_path = os.path.join(recipes_dir, f"{_slug_for_path(raw)}.json")
-        added_at = os.path.getmtime(json_path) if os.path.exists(json_path) else 0.0
+        # Use source file mtime so the list stays correct across re-indexing.
+        src_path = os.path.join(BOOKS_ADDED_DIR, raw)
+        if not os.path.exists(src_path):
+            src_path = os.path.join(BOOKS_DIR, raw)
+        added_at = os.path.getmtime(src_path) if os.path.exists(src_path) else 0.0
         books.append({
             'source': raw,
             'title': _clean_source(raw),
