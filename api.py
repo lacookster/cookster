@@ -355,6 +355,32 @@ def _clean_source(source: str) -> str:
     return base.strip(' -_')
 
 
+def _source_added_at(raw_source: str, c: sqlite3.Cursor, recipes_dir: str) -> float:
+    """Return a stable timestamp for when a book was added.
+
+    1. Source EPUB file mtime (best, survives re-indexing).
+    2. book_index_log.json_mtime (preserved in the committed DB, survives
+       git clones where the raw source files are absent).
+    3. book_index_log.indexed_at (last-resort fallback).
+    """
+    src_path = os.path.join(BOOKS_ADDED_DIR, raw_source)
+    if not os.path.exists(src_path):
+        src_path = os.path.join(BOOKS_DIR, raw_source)
+    if os.path.exists(src_path):
+        return os.path.getmtime(src_path)
+
+    try:
+        row = c.execute(
+            'SELECT json_mtime, indexed_at FROM book_index_log WHERE source = ?',
+            (raw_source,)
+        ).fetchone()
+        if row:
+            return row[0] or row[1] or 0.0
+    except sqlite3.OperationalError:
+        pass
+    return 0.0
+
+
 def _snippet(text: str, q: str, radius: int = 120, full_if_short: int = 320):
     """Return a snippet of text around the first query match, or a useful fallback.
 
@@ -1500,30 +1526,6 @@ def books_list(request: Request, db: str = Query('cookster.db')):
                 cover_images[raw_source] = _image_path_to_url(image)
     except sqlite3.OperationalError:
         pass
-    def _source_added_at(raw_source: str) -> float:
-        """Return a timestamp for when a book was added.
-
-        Prefers the source file's mtime (robust across re-indexing). Falls back
-        to the preprocessed JSON mtime, then to the DB's book_index_log entry.
-        This keeps the 'new books' list working on deployed instances where the
-        raw source files are not present.
-        """
-        src_path = os.path.join(BOOKS_ADDED_DIR, raw_source)
-        if not os.path.exists(src_path):
-            src_path = os.path.join(BOOKS_DIR, raw_source)
-        if os.path.exists(src_path):
-            return os.path.getmtime(src_path)
-        json_path = os.path.join(recipes_dir, f"{_slug_for_path(raw_source)}.json")
-        if os.path.exists(json_path):
-            return os.path.getmtime(json_path)
-        try:
-            row = c.execute('SELECT indexed_at FROM book_index_log WHERE source = ?', (raw_source,)).fetchone()
-            if row:
-                return row[0]
-        except sqlite3.OperationalError:
-            pass
-        return 0.0
-
     recipes_dir = os.path.join(DB_DIR, 'data', 'recipes')
     books = []
     seen = set()
@@ -1536,7 +1538,7 @@ def books_list(request: Request, db: str = Query('cookster.db')):
             'clean': _clean_source(raw),
             'count': count,
             'image_url': cover_images.get(raw, ''),
-            'added_at': _source_added_at(raw),
+            'added_at': _source_added_at(raw, c, recipes_dir),
         })
     books.sort(key=lambda x: x['clean'])
     new_books = sorted(
@@ -1581,27 +1583,12 @@ def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int =
     for raw, count in rows:
         if not raw:
             continue
-        # Prefer source file mtime, fall back to JSON mtime, then DB log time.
-        src_path = os.path.join(BOOKS_ADDED_DIR, raw)
-        if not os.path.exists(src_path):
-            src_path = os.path.join(BOOKS_DIR, raw)
-        if os.path.exists(src_path):
-            added_at = os.path.getmtime(src_path)
-        else:
-            json_path = os.path.join(recipes_dir, f"{_slug_for_path(raw)}.json")
-            added_at = os.path.getmtime(json_path) if os.path.exists(json_path) else 0.0
-            if not added_at:
-                try:
-                    row = c.execute('SELECT indexed_at FROM book_index_log WHERE source = ?', (raw,)).fetchone()
-                    added_at = row[0] if row else 0.0
-                except sqlite3.OperationalError:
-                    pass
         books.append({
             'source': raw,
             'title': _clean_source(raw),
             'count': count,
             'image_url': cover_images.get(raw, ''),
-            'added_at': added_at,
+            'added_at': _source_added_at(raw, c, recipes_dir),
         })
     conn.close()
     books.sort(key=lambda x: x['added_at'], reverse=True)
