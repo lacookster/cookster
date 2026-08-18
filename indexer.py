@@ -3678,21 +3678,8 @@ def _extract_first_generation_recipes(soup: BeautifulSoup, epub_path: str,
             'image': '',
         }
 
-    def _finalize():
-        nonlocal cur
-        if cur and len(cur['ingredients']) >= 2 and len(cur['steps']) >= 1:
-            title_elem = cur.pop('title_elem', None)
-            # Recipe photos appear immediately after the title.
-            if saved_images and title_elem is not None and not cur.get('image'):
-                cur['image'] = _find_nearest_image(
-                    title_elem, doc_name, saved_images, images_dir, direction='after')
-            cur['ingredients'] = '\n'.join(cur['ingredients']).strip()
-            cur['steps'] = '\n'.join(cur['steps']).strip()
-            cur['serves'] = cur['serves'].strip()
-            recipes.append(cur)
-        cur = None
-
     body = soup.body or soup
+    title_tags = []
     for elem in body.find_all(['h3', 'p', 'h4', 'h5']):
         cls = elem.get('class', []) or []
         cls_set = set(cls)
@@ -3701,6 +3688,43 @@ def _extract_first_generation_recipes(soup: BeautifulSoup, epub_path: str,
             continue
 
         # Recipe titles live in h3.rt / h3.rt-alt. Plain h3.h3 are essays.
+        if elem.name == 'h3' and cls_set & {'rt', 'rt-alt'}:
+            title_tags.append(elem)
+
+    title_images = {}
+    if saved_images and title_tags:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = {
+            id(t): img for t, img in _map_images_to_titles(
+                title_tags, images, direction='after',
+                doc_name=doc_name, saved_images=saved_images,
+                images_dir=images_dir).items()
+        }
+
+    def _finalize():
+        nonlocal cur
+        if cur and len(cur['ingredients']) >= 2 and len(cur['steps']) >= 1:
+            title_elem = cur.pop('title_elem', None)
+            # Recipe photos appear immediately after the title.
+            if saved_images and title_elem is not None and not cur.get('image'):
+                img = title_images.get(id(title_elem))
+                if img:
+                    cur['image'] = _resolve_image_path(
+                        img.get('src') or '', doc_name, saved_images, images_dir)
+            cur['ingredients'] = '\n'.join(cur['ingredients']).strip()
+            cur['steps'] = '\n'.join(cur['steps']).strip()
+            cur['serves'] = cur['serves'].strip()
+            recipes.append(cur)
+        cur = None
+
+    cur = None
+    for elem in body.find_all(['h3', 'p', 'h4', 'h5']):
+        cls = elem.get('class', []) or []
+        cls_set = set(cls)
+        text = _normalize_whitespace(elem.get_text(' ', strip=True))
+        if not text:
+            continue
+
         if elem.name == 'h3' and cls_set & {'rt', 'rt-alt'}:
             _finalize()
             cur = _new(text, elem)
@@ -3723,10 +3747,8 @@ def _extract_first_generation_recipes(soup: BeautifulSoup, epub_path: str,
         if cls_set & {'rpf', 'rp'}:
             cur['steps'].append(text)
             continue
-        # Notes/tips after steps
         if cls_set & {'rnh', 'rn'}:
             continue
-        # Chinese titles/subtitles are decorative
         if cls_set & {'rst', 'rst2', 'rst-alt', 'rst2-alt'}:
             continue
 
@@ -3737,11 +3759,10 @@ def _extract_first_generation_recipes(soup: BeautifulSoup, epub_path: str,
 def _extract_first_generation_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
                                                   doc_name: str = '', saved_images: Dict[str, str] = None,
                                                   images_dir: str = '') -> List[Dict]:
-    recipes = _extract_first_generation_recipes(soup, epub_path, doc_name, saved_images, images_dir)
-    for r in recipes:
-        if not r.get('image'):
-            r['image'] = image_path
-    return recipes
+    # Per-recipe image mapping is done in _extract_first_generation_recipes.
+    # Leave recipes without a matching photo blank rather than reusing the
+    # chapter/document image.
+    return _extract_first_generation_recipes(soup, epub_path, doc_name, saved_images, images_dir)
 
 
 def _extract_into_vietnamese_recipes(soup: BeautifulSoup, epub_path: str,
@@ -3843,7 +3864,23 @@ def _extract_into_vietnamese_recipes(soup: BeautifulSoup, epub_path: str,
         title_to_recipe[english_title.lower()] = r
         title_to_recipe[r['title'].lower()] = r
 
-    # Match captioned images to recipes.
+    # Match captioned images to recipes.  Use both exact substring and token
+    # overlap so captions like "Tet Sticky Rice Cake" still match
+    # "TET STICKY RICE CAKES".
+    def _caption_score(caption: str, title: str) -> int:
+        if title in caption:
+            return 1000 + len(title)
+        caption_tokens = set(re.findall(r'\w+', caption))
+        title_tokens = set(re.findall(r'\w+', title))
+        if not title_tokens:
+            return -1
+        common = caption_tokens & title_tokens
+        # Require at least two content words in common.
+        if len(common) < 2:
+            return -1
+        # Score by fraction of title tokens found in the caption.
+        return int(100 * len(common) / len(title_tokens))
+
     for img in body.find_all('img'):
         if _is_decorative_image(img):
             continue
@@ -3860,17 +3897,18 @@ def _extract_into_vietnamese_recipes(soup: BeautifulSoup, epub_path: str,
         if not caption_elem:
             continue
         caption = _normalize_whitespace(caption_elem.get_text(' ', strip=True)).lower()
-        # Find the recipe whose title appears earliest in the caption.
+        # Find the recipe whose title matches the caption best.
         best_match = None
-        best_pos = float('inf')
+        best_score = -1
         for key, r in title_to_recipe.items():
             if not key:
                 continue
-            pos = caption.find(key)
-            if pos != -1 and pos < best_pos:
-                best_pos = pos
+            score = _caption_score(caption, key)
+            if score > best_score:
+                best_score = score
                 best_match = r
-        if best_match and not best_match.get('image'):
+        # Require a meaningful match (exact hit or >=70% token overlap).
+        if best_score >= 70 and best_match and not best_match.get('image'):
             best_match['image'] = resolved
 
     return recipes
@@ -3885,6 +3923,95 @@ def _extract_into_vietnamese_recipes_with_image(soup: BeautifulSoup, epub_path: 
     for r in recipes:
         if not r.get('image'):
             r['image'] = ''
+    return recipes
+
+
+def _extract_street_food_asia_recipes(soup: BeautifulSoup, epub_path: str,
+                                       doc_name: str = '', saved_images: Dict[str, str] = None,
+                                       images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Luke Nguyen's 'Street Food Asia'.
+
+    Each recipe lives in its own HTML document. Titles use <p class='rec-ttl'>,
+    subtitles use <p class='rec-sttl'>, yields use <p class='txt'>, ingredients
+    use <p class='hang'>, and steps use <p class='txi'> / <p class='txii'>.
+    The recipe photo appears after the title.
+    """
+    recipes = []
+    body = soup.body or soup
+
+    title_tag = body.find('p', class_='rec-ttl')
+    if not title_tag:
+        return recipes
+
+    title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+    if not title:
+        return recipes
+
+    ingredients = []
+    steps = []
+    serves = ''
+    in_steps = False
+
+    for elem in title_tag.find_all_next():
+        if not elem.name:
+            continue
+        cls = elem.get('class', []) or []
+        cls_set = set(cls)
+        text = _normalize_whitespace(elem.get_text(' ', strip=True))
+        if not text:
+            continue
+
+        if 'rec-ttl' in cls_set:
+            break
+        if 'rec-sttl' in cls_set:
+            continue
+        if 'txm' in cls_set:
+            continue
+        if 'txt' in cls_set and not in_steps:
+            # Yield line or subheading before steps begin.
+            low = text.lower()
+            if _is_serves_line(text) or low.startswith(('serves', 'makes')):
+                serves += ' ' + text
+            continue
+        if 'hang' in cls_set and not in_steps:
+            ingredients.append(text)
+            continue
+        if cls_set & {'txi', 'txii'}:
+            in_steps = True
+            steps.append(text)
+            continue
+
+    if len(ingredients) >= 2 and len(steps) >= 1:
+        image_path = ''
+        if saved_images:
+            images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+            title_images = _map_images_to_titles(
+                [title_tag], images, direction='after',
+                doc_name=doc_name, saved_images=saved_images,
+                images_dir=images_dir)
+            img = title_images.get(id(title_tag))
+            if img:
+                image_path = _resolve_image_path(
+                    img.get('src') or '', doc_name, saved_images, images_dir)
+        recipes.append({
+            'title': title,
+            'ingredients': '\n'.join(ingredients).strip(),
+            'steps': '\n'.join(steps).strip(),
+            'source': os.path.basename(epub_path),
+            'file_path': epub_path,
+            'image': image_path,
+            'serves': serves.strip(),
+        })
+    return recipes
+
+
+def _extract_street_food_asia_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                                  doc_name: str = '', saved_images: Dict[str, str] = None,
+                                                  images_dir: str = '') -> List[Dict]:
+    recipes = _extract_street_food_asia_recipes(soup, epub_path, doc_name, saved_images, images_dir)
+    for r in recipes:
+        if not r.get('image'):
+            r['image'] = image_path
     return recipes
 
 
@@ -3905,13 +4032,22 @@ def _extract_good_bite_recipes(soup: BeautifulSoup, epub_path: str,
     body = soup.body or soup
 
     title_tags = body.find_all('h2', class_='rec_head')
+    title_images = {}
+    if saved_images and title_tags:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = {
+            id(t): img for t, img in _map_images_to_titles(
+                title_tags, images, direction='after',
+                doc_name=doc_name, saved_images=saved_images,
+                images_dir=images_dir).items()
+        }
+
     n = len(title_tags)
     for i, title_tag in enumerate(title_tags):
         title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
         if not title:
             continue
 
-        next_title = title_tags[i + 1] if i + 1 < n else None
         ingredients = []
         steps = []
         serves = ''
@@ -3948,8 +4084,10 @@ def _extract_good_bite_recipes(soup: BeautifulSoup, epub_path: str,
         if len(ingredients) >= 2 and len(steps) >= 1:
             image_path = ''
             if saved_images:
-                image_path = _find_nearest_image(
-                    title_tag, doc_name, saved_images, images_dir, direction='after')
+                img = title_images.get(id(title_tag))
+                if img:
+                    image_path = _resolve_image_path(
+                        img.get('src') or '', doc_name, saved_images, images_dir)
             recipes.append({
                 'title': title,
                 'ingredients': '\n'.join(ingredients).strip(),
@@ -3965,11 +4103,9 @@ def _extract_good_bite_recipes(soup: BeautifulSoup, epub_path: str,
 def _extract_good_bite_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
                                           doc_name: str = '', saved_images: Dict[str, str] = None,
                                           images_dir: str = '') -> List[Dict]:
-    recipes = _extract_good_bite_recipes(soup, epub_path, doc_name, saved_images, images_dir)
-    for r in recipes:
-        if not r.get('image'):
-            r['image'] = image_path
-    return recipes
+    # Per-recipe image mapping is done in _extract_good_bite_recipes.  Leave
+    # recipes without a matching photo blank.
+    return _extract_good_bite_recipes(soup, epub_path, doc_name, saved_images, images_dir)
 
 
 def _extract_estela_recipes(soup: BeautifulSoup, epub_path: str,
@@ -3980,14 +4116,24 @@ def _extract_estela_recipes(soup: BeautifulSoup, epub_path: str,
     Recipes live in chapter XHTML files. Titles are <p class='RH'>, yields are
     <p class='RY'>, ingredients use <p class='RI'> / <p class='RIH1'>, and
     steps use <p class='RPH'> / <p class='RP1'> / <p class='RP'>.  Recipe photos
-    appear immediately before each title.
+    appear before each title in document order; map them by position so each
+    photo is tied to the correct recipe.
     """
     recipes = []
     body = soup.body or soup
 
     title_tags = body.find_all('p', class_='RH')
-    n = len(title_tags)
-    for i, title_tag in enumerate(title_tags):
+    title_images = {}
+    if saved_images and title_tags:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = {
+            id(t): img for t, img in _map_images_to_titles(
+                title_tags, images, direction='before',
+                doc_name=doc_name, saved_images=saved_images,
+                images_dir=images_dir).items()
+        }
+
+    for title_tag in title_tags:
         title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
         if not title:
             continue
@@ -4028,8 +4174,10 @@ def _extract_estela_recipes(soup: BeautifulSoup, epub_path: str,
         if len(ingredients) >= 2 and len(steps) >= 1:
             image_path = ''
             if saved_images:
-                image_path = _find_nearest_image(
-                    title_tag, doc_name, saved_images, images_dir, direction='before')
+                img = title_images.get(id(title_tag))
+                if img:
+                    image_path = _resolve_image_path(
+                        img.get('src') or '', doc_name, saved_images, images_dir)
             recipes.append({
                 'title': title,
                 'ingredients': '\n'.join(ingredients).strip(),
@@ -4045,11 +4193,10 @@ def _extract_estela_recipes(soup: BeautifulSoup, epub_path: str,
 def _extract_estela_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
                                        doc_name: str = '', saved_images: Dict[str, str] = None,
                                        images_dir: str = '') -> List[Dict]:
-    recipes = _extract_estela_recipes(soup, epub_path, doc_name, saved_images, images_dir)
-    for r in recipes:
-        if not r.get('image'):
-            r['image'] = image_path
-    return recipes
+    # Per-recipe image mapping is done in _extract_estela_recipes.  Do not fall
+    # back to the chapter/document image, because that assigns the same photo to
+    # many unrelated recipes.
+    return _extract_estela_recipes(soup, epub_path, doc_name, saved_images, images_dir)
 
 
 def _extract_thomas_keller_recipes(soup: BeautifulSoup, epub_path: str,
@@ -4061,14 +4208,23 @@ def _extract_thomas_keller_recipes(soup: BeautifulSoup, epub_path: str,
     ingredient sections marked by <h4 class='rec_ing-h4'> / <h4 class='rec_ing-h4b'>,
     ingredients in <p class='rec_ing'>, step sections in <h4 class='rec_step-h4'>,
     and steps in <p class='rec_stept'> / <p class='rec_step'>.  Recipe photos sit
-    just before each title.
+    before each title in document order.
     """
     recipes = []
     body = soup.body or soup
 
     title_tags = body.find_all('h3', class_='h3_rec')
-    n = len(title_tags)
-    for i, title_tag in enumerate(title_tags):
+    title_images = {}
+    if saved_images and title_tags:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = {
+            id(t): img for t, img in _map_images_to_titles(
+                title_tags, images, direction='before',
+                doc_name=doc_name, saved_images=saved_images,
+                images_dir=images_dir).items()
+        }
+
+    for title_tag in title_tags:
         title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
         if not title:
             continue
@@ -4109,8 +4265,10 @@ def _extract_thomas_keller_recipes(soup: BeautifulSoup, epub_path: str,
         if len(ingredients) >= 2 and len(steps) >= 1:
             image_path = ''
             if saved_images:
-                image_path = _find_nearest_image(
-                    title_tag, doc_name, saved_images, images_dir, direction='before')
+                img = title_images.get(id(title_tag))
+                if img:
+                    image_path = _resolve_image_path(
+                        img.get('src') or '', doc_name, saved_images, images_dir)
             recipes.append({
                 'title': title,
                 'ingredients': '\n'.join(ingredients).strip(),
@@ -4126,11 +4284,9 @@ def _extract_thomas_keller_recipes(soup: BeautifulSoup, epub_path: str,
 def _extract_thomas_keller_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
                                               doc_name: str = '', saved_images: Dict[str, str] = None,
                                               images_dir: str = '') -> List[Dict]:
-    recipes = _extract_thomas_keller_recipes(soup, epub_path, doc_name, saved_images, images_dir)
-    for r in recipes:
-        if not r.get('image'):
-            r['image'] = image_path
-    return recipes
+    # Per-recipe image mapping is done in _extract_thomas_keller_recipes.  Do not
+    # blanket-fill with the chapter/document image.
+    return _extract_thomas_keller_recipes(soup, epub_path, doc_name, saved_images, images_dir)
 
 
 def _extract_image_only_book_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
@@ -4411,6 +4567,7 @@ register_extractor(_source_predicate('into the vietnamese kitchen'), _extract_in
 register_extractor(_source_predicate('good bite'), _extract_good_bite_recipes_with_image, 'good bite')
 register_extractor(_source_predicate('estela'), _extract_estela_recipes_with_image, 'estela')
 register_extractor(_source_predicate('thomas keller'), _extract_thomas_keller_recipes_with_image, 'thomas keller')
+register_extractor(_source_predicate('street food asia'), _extract_street_food_asia_recipes_with_image, 'street food asia')
 register_extractor(_source_predicate('new kitchen'), _extract_image_only_book_recipes_with_image, 'new kitchen')
 register_extractor(_source_predicate('forest feast'), _extract_image_only_book_recipes_with_image, 'forest feast')
 register_extractor(_source_predicate('nopalito'), _extract_nopalito_recipes_with_image, 'nopalito')
@@ -4653,6 +4810,66 @@ def _find_nearest_image(ref_elem, doc_name: str, saved_images: Dict[str, str],
         if found:
             return found
     return ''
+
+
+def _map_images_to_titles(title_tags, images, direction: str = 'before',
+                          doc_name: str = '', saved_images: Dict[str, str] = None,
+                          images_dir: str = '') -> Dict:
+    """Map non-decorative images to title elements by document order.
+
+    For ``direction='before'`` the last image that appears before each title
+    (and after the previous title) is assigned to that title.  For
+    ``direction='after'`` the first image that appears after each title (and
+    before the next title) is assigned.  This avoids assigning a neighbouring
+    recipe's photo to the current recipe.
+
+    Duplicate references to the same image file are collapsed to the first
+    occurrence so one photo is not assigned to multiple recipes.
+    """
+    def _idx(elem):
+        # Document-order index based on how many elements precede ``elem``.
+        try:
+            return len(elem.find_all_previous())
+        except Exception:
+            return 0
+
+    # De-duplicate images by resolved path, keeping the first occurrence.
+    seen_paths = set()
+    unique_images = []
+    for img in images:
+        path = ''
+        if saved_images:
+            path = _resolve_image_path(img.get('src') or '', doc_name, saved_images, images_dir)
+        else:
+            path = os.path.basename(img.get('src') or '')
+        if not path:
+            continue
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        unique_images.append(img)
+
+    title_indices = {t: _idx(t) for t in title_tags}
+    image_indices = {img: _idx(img) for img in unique_images}
+    sorted_titles = sorted(title_tags, key=lambda t: title_indices[t])
+    sorted_images = sorted(unique_images, key=lambda img: image_indices[img])
+
+    assignments: Dict = {}
+    for i, title in enumerate(sorted_titles):
+        curr_idx = title_indices[title]
+        if direction == 'before':
+            prev_idx = title_indices[sorted_titles[i - 1]] if i > 0 else -1
+            candidates = [img for img in sorted_images
+                          if prev_idx < image_indices[img] <= curr_idx]
+            if candidates:
+                assignments[title] = candidates[-1]
+        else:  # after
+            next_idx = title_indices[sorted_titles[i + 1]] if i + 1 < len(sorted_titles) else float('inf')
+            candidates = [img for img in sorted_images
+                          if curr_idx <= image_indices[img] < next_idx]
+            if candidates:
+                assignments[title] = candidates[0]
+    return assignments
 
 
 def _find_image_for_doc(items: List, doc_idx: int, soup: BeautifulSoup, doc_name: str,
