@@ -4,6 +4,7 @@
   --surface-2: #f5f2ec;
   --text: #2a211c;
   --text-secondary: #7a6e65;
+  --muted: var(--text-secondary);
   --accent: #c0392b;
   --accent-hover: #a93226;
   --accent-soft: #f9ebea;
@@ -22,6 +23,7 @@
   --surface-2: #322c27;
   --text: #f5f2ec;
   --text-secondary: #b0a69d;
+  --muted: var(--text-secondary);
   --accent: #e74c3c;
   --accent-hover: #ff6f61;
   --accent-soft: #3d2723;
@@ -67,7 +69,7 @@ body::after {
   z-index: -1;
   background: url('/static/cookster-logo.jpg') no-repeat center 70%;
   background-size: min(420px, 60vw);
-  opacity: 0.028;
+  opacity: 0.018;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -668,6 +670,8 @@ header.top {
   flex-direction: column;
   transition: transform 0.2s, box-shadow 0.2s;
   position: relative;
+  content-visibility: auto;
+  contain-intrinsic-height: auto 300px;
 }
 
 .card:hover {
@@ -1124,12 +1128,6 @@ header.top {
   border: 1px solid var(--border);
 }
 .btn.secondary:hover { background: var(--border); }
-.btn.danger {
-  background: #fdeaea;
-  color: #c0392b;
-  border: 1px solid #f5c6cb;
-}
-.btn.danger:hover { background: #fbd5d5; }
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -1423,6 +1421,8 @@ header.top {
   text-decoration: none;
   transition: transform 0.2s, box-shadow 0.2s;
   box-shadow: var(--shadow);
+  content-visibility: auto;
+  contain-intrinsic-height: auto 200px;
 }
 .related-card:hover {
   transform: translateY(-3px);
@@ -1472,6 +1472,16 @@ header.top {
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Print */

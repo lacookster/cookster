@@ -1,7 +1,8 @@
 (() => {
   const Lists = window.CooksterLists
-  const recipeId = String(document.getElementById('recipe-fav').dataset.id)
-  const favBtn = document.getElementById('recipe-fav')
+  const favEl = document.getElementById('recipe-fav')
+  const recipeId = String(favEl ? favEl.dataset.id : (document.querySelector('[data-recipe-id]')?.dataset.recipeId || ''))
+  const favBtn = favEl
   const wantBtn = document.getElementById('recipe-want')
   const listToggle = document.getElementById('list-toggle')
   const listMenu = document.getElementById('list-menu')
@@ -230,9 +231,14 @@
     `
   }
 
+  let relatedAbortController = null
+  let nutritionAbortController = null
+
   async function loadRelated() {
+    if (relatedAbortController) relatedAbortController.abort()
+    relatedAbortController = new AbortController()
     try {
-      const res = await fetch(`/api/related/${encodeURIComponent(recipeId)}`)
+      const res = await fetch(`/api/related/${encodeURIComponent(recipeId)}`, { signal: relatedAbortController.signal })
       if (!res.ok) throw new Error('related failed')
       const data = await res.json()
 
@@ -250,6 +256,7 @@
         similarSection.style.display = ''
       }
     } catch (err) {
+      if (err.name === 'AbortError') return
       console.error('[cookster] related error:', err)
     }
   }
@@ -818,16 +825,20 @@
     })
   }
 
+  function escapeMarkdownLine(text) {
+    return text.replace(/^#/gm, '\\#')
+  }
+
   if (exportMarkdownBtn) {
     exportMarkdownBtn.addEventListener('click', () => {
       const title = document.querySelector('.recipe-header h1').textContent.trim()
       const source = getRecipeSource()
       const ingredients = getIngredients()
       const steps = Array.from(document.querySelectorAll('.step')).map(s => s.textContent.trim()).filter(Boolean)
-      let md = `# ${title}\n\n*From ${source}*\n\n## Ingredients\n\n`
-      md += ingredients.map(i => `- ${i}`).join('\n')
+      let md = `# ${escapeMarkdownLine(title)}\n\n*From ${escapeMarkdownLine(source)}*\n\n## Ingredients\n\n`
+      md += ingredients.map(i => `- ${escapeMarkdownLine(i)}`).join('\n')
       md += `\n\n## Method\n\n`
-      md += steps.map((s, i) => `${i + 1}. ${s}`).join('\n\n')
+      md += steps.map((s, i) => `${i + 1}. ${escapeMarkdownLine(s)}`).join('\n\n')
       md += `\n\n[View in Cookster](${pageUrl})\n`
       navigator.clipboard.writeText(md).catch(() => {})
       const blob = new Blob([md], { type: 'text/markdown' })
@@ -890,7 +901,7 @@
     heroImg.addEventListener('click', openLightbox)
   }
   if (lightbox) {
-    lightbox.addEventListener('click', (e) => { if (e.target === lightbox || e.target === lightboxImg) closeLightbox() })
+    lightbox.addEventListener('click', (e) => { if (e.target === lightbox || e.target === lightboxClose) closeLightbox() })
   }
   if (lightboxClose) lightboxClose.addEventListener('click', closeLightbox)
   document.addEventListener('keydown', (e) => {
@@ -970,8 +981,10 @@
     const badge = document.getElementById('nutrition-badge')
     if (!badge) return
     const db = badge.dataset.db || 'cookster.db'
+    if (nutritionAbortController) nutritionAbortController.abort()
+    nutritionAbortController = new AbortController()
     try {
-      const res = await fetch(`/api/nutrition/${encodeURIComponent(recipeId)}?db=${encodeURIComponent(db)}`)
+      const res = await fetch(`/api/nutrition/${encodeURIComponent(recipeId)}?db=${encodeURIComponent(db)}`, { signal: nutritionAbortController.signal })
       if (!res.ok) throw new Error('nutrition failed')
       const data = await res.json()
       if (data.estimated_calories && data.estimated_calories > 0) {
@@ -982,6 +995,7 @@
         badge.classList.add('empty')
       }
     } catch (err) {
+      if (err.name === 'AbortError') return
       console.error('[cookster] nutrition error:', err)
       badge.textContent = 'No nutrition estimate available'
       badge.classList.add('empty')

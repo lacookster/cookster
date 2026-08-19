@@ -592,6 +592,14 @@ def _source_added_at(raw_source: str, c: sqlite3.Cursor, recipes_dir: str) -> fl
     if os.path.exists(src_path):
         return os.path.getmtime(src_path)
 
+    # Source files may have been moved or renamed; try the filename alone.
+    basename = os.path.basename(raw_source)
+    src_path = os.path.join(BOOKS_ADDED_DIR, basename)
+    if not os.path.exists(src_path):
+        src_path = os.path.join(BOOKS_DIR, basename)
+    if os.path.exists(src_path):
+        return os.path.getmtime(src_path)
+
     try:
         row = c.execute(
             'SELECT json_mtime, indexed_at FROM book_index_log WHERE source = ?',
@@ -1824,7 +1832,7 @@ def books_list(request: Request, db: str = Query('cookster.db')):
         c = conn.cursor()
         try:
             rows = c.execute(
-                'SELECT source, COUNT(*) FROM recipes '
+                'SELECT source, COUNT(*), MAX(id) FROM recipes '
                 'WHERE source IS NOT NULL AND source != "" GROUP BY source ORDER BY source'
             ).fetchall()
         except sqlite3.OperationalError:
@@ -1842,7 +1850,7 @@ def books_list(request: Request, db: str = Query('cookster.db')):
             pass
         books = []
         seen = set()
-        for raw, count in rows:
+        for raw, count, max_id in rows:
             if not raw or raw in seen:
                 continue
             seen.add(raw)
@@ -1852,11 +1860,12 @@ def books_list(request: Request, db: str = Query('cookster.db')):
                 'count': count,
                 'image_url': cover_images.get(raw, ''),
                 'added_at': _source_added_at(raw, c, recipes_dir),
+                'max_id': max_id,
             })
     books.sort(key=lambda x: x['clean'])
     new_books = sorted(
-        [b for b in books if b['added_at'] > 0],
-        key=lambda x: x['added_at'],
+        books,
+        key=lambda x: (x['added_at'], x['max_id']),
         reverse=True,
     )[:12]
     tmpl = templates.env.get_template('books.html')
@@ -1877,7 +1886,7 @@ def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int =
     with db_connection(db_path, setup_fn=_ensure_schema) as conn:
         c = conn.cursor()
         rows = c.execute(
-            'SELECT source, COUNT(*) FROM recipes '
+            'SELECT source, COUNT(*), MAX(id) FROM recipes '
             'WHERE source IS NOT NULL AND source != "" GROUP BY source'
         ).fetchall()
         cover_images: Dict[str, str] = {}
@@ -1891,7 +1900,7 @@ def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int =
         except sqlite3.OperationalError:
             pass
         books = []
-        for raw, count in rows:
+        for raw, count, max_id in rows:
             if not raw:
                 continue
             books.append({
@@ -1900,8 +1909,9 @@ def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int =
                 'count': count,
                 'image_url': cover_images.get(raw, ''),
                 'added_at': _source_added_at(raw, c, recipes_dir),
+                'max_id': max_id,
             })
-    books.sort(key=lambda x: x['added_at'], reverse=True)
+    books.sort(key=lambda x: (x['added_at'], x['max_id']), reverse=True)
     return JSONResponse({'books': books[:limit]})
 
 

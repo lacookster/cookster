@@ -9,6 +9,14 @@
 
   let saveTimer = null
   let lastServerPush = 0
+  let pushRetryCount = 0
+  let _cached = null
+
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY) {
+      _cached = null
+    }
+  })
 
   function today() {
     const d = new Date()
@@ -153,6 +161,7 @@
   }
 
   function load() {
+    if (_cached) return _cached
     try {
       let raw = localStorage.getItem(STORAGE_KEY)
       if (!raw) {
@@ -169,16 +178,19 @@
         }
       }
       const parsed = migrate(raw || '{}')
-      return parsed || emptyData()
+      _cached = parsed || emptyData()
+      return _cached
     } catch (e) {
       console.error('[cookster] failed to load lists', e)
-      return emptyData()
+      _cached = emptyData()
+      return _cached
     }
   }
 
   function save(data) {
     try {
       data.updatedAt = Date.now()
+      _cached = data
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
       notify()
       schedulePush()
@@ -193,6 +205,7 @@
 
   function schedulePush() {
     if (saveTimer) clearTimeout(saveTimer)
+    pushRetryCount = 0
     saveTimer = setTimeout(pushToServer, SERVER_DEBOUNCE_MS)
   }
 
@@ -200,7 +213,10 @@
     const data = load()
     // Avoid pushing more often than the debounce interval in very active sessions.
     const now = Date.now()
-    if (now - lastServerPush < 500) return
+    if (now - lastServerPush < 500) {
+      setTimeout(pushToServer, 500)
+      return
+    }
     lastServerPush = now
     fetch('/api/user-data', {
       method: 'POST',
@@ -210,11 +226,17 @@
     })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('server error ' + r.status)))
       .then(() => {
+        pushRetryCount = 0
         window.dispatchEvent(new CustomEvent('cookster-sync-status', { detail: { status: 'saved', when: now } }))
       })
       .catch(err => {
         console.error('[cookster] failed to sync to server', err)
         window.dispatchEvent(new CustomEvent('cookster-sync-status', { detail: { status: 'error', when: now } }))
+        if (pushRetryCount < 3) {
+          const delay = 1000 * Math.pow(2, pushRetryCount)
+          pushRetryCount++
+          setTimeout(pushToServer, delay)
+        }
       })
   }
 
@@ -255,6 +277,7 @@
     if (hasContent(serverData) && !hasContent(localData)) {
       serverData.updatedAt = serverTime
       localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData))
+      _cached = null
       notify()
       return
     }
@@ -268,6 +291,7 @@
       if (serverTime > localTime) {
         serverData.updatedAt = serverTime
         localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData))
+        _cached = null
         notify()
       } else if (localTime > serverTime) {
         pushToServer()
@@ -774,6 +798,7 @@
     // Server sync helpers --------------------------------------------------
     syncNow() {
       if (saveTimer) clearTimeout(saveTimer)
+      pushRetryCount = 0
       pushToServer()
     },
 

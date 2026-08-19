@@ -40,8 +40,8 @@
           <span class="search-icon" aria-hidden="true">🔎</span>
           <input id="q" placeholder="Search recipes, ingredients, or methods…" autocomplete="off" autofocus />
           <button id="voice-search" class="voice-search-btn" type="button" aria-label="Search by voice">🎤</button>
-          <div id="suggestions" class="suggestions" aria-hidden="true"></div>
-        <div id="recent-searches" class="recent-searches" aria-hidden="true"></div>
+          <div id="suggestions" class="suggestions" role="listbox" aria-hidden="true"></div>
+          <div id="recent-searches" class="recent-searches" role="listbox" aria-hidden="true"></div>
           <button id="go">Search</button>
         </div>
       </div>
@@ -321,6 +321,7 @@
     </div>
 
     <script src="/static/lists.js" defer></script>
+    <script src="/static/ui.js" defer></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>

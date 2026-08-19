@@ -117,34 +117,6 @@
     <div id="lists-backdrop" class="lists-backdrop"></div>
 
     <script src="/static/lists.js" defer></script>
-    <script>
-      document.addEventListener('DOMContentLoaded', () => {
-        (() => {
-          const listsPanel = document.getElementById('lists-panel')
-          const listsBackdrop = document.getElementById('lists-backdrop')
-          document.getElementById('lists-toggle').addEventListener('click', () => {
-            listsPanel.classList.add('open')
-            listsBackdrop.classList.add('open')
-          })
-          document.getElementById('lists-close').addEventListener('click', () => {
-            listsPanel.classList.remove('open')
-            listsBackdrop.classList.remove('open')
-          })
-          listsBackdrop.addEventListener('click', () => {
-            listsPanel.classList.remove('open')
-            listsBackdrop.classList.remove('open')
-          })
-
-          document.getElementById('theme').addEventListener('click', () => {
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-            const next = isDark ? 'light' : 'dark'
-            document.documentElement.setAttribute('data-theme', next)
-            localStorage.setItem('theme', next)
-          })
-          const saved = localStorage.getItem('theme')
-          if (saved) document.documentElement.setAttribute('data-theme', saved)
-        })()
-      })
-    </script>
+    <script src="/static/ui.js" defer></script>
   </body>
 </html>

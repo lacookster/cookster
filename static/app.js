@@ -87,6 +87,9 @@
   const limit = 50
   const SHOPPING_GROUPED_KEY = 'cookster_shopping_grouped'
   let shoppingGrouped = false
+  let searchAbortController = null
+  let suggestAbortController = null
+  let newBooksAbortController = null
   try {
     shoppingGrouped = localStorage.getItem(SHOPPING_GROUPED_KEY) === 'true'
   } catch (e) {}
@@ -212,7 +215,7 @@
         <button id="clear-recent" class="text-btn">Clear</button>
       </div>
       ${recents.map((r, i) => `
-        <div class="recent-search-item" data-index="${i}" role="button" tabindex="0">
+        <div class="recent-search-item" role="option" data-index="${i}" tabindex="0">
           <span class="recent-search-query">${escapeHtml(r.q)}</span>
           ${r.filters || r.sort && r.sort !== 'relevance' ? `<span class="recent-search-meta">${escapeHtml([r.filters, r.sort !== 'relevance' ? r.sort : ''].filter(Boolean).join(' · '))}</span>` : ''}
         </div>
@@ -422,9 +425,11 @@
     syncUrl(false)
     countEl.textContent = ''
     setBusy(true)
+    if (newBooksAbortController) newBooksAbortController.abort()
+    newBooksAbortController = new AbortController()
     let homeHtml = ''
     try {
-      const res = await fetch('/api/new-books?limit=5')
+      const res = await fetch('/api/new-books?limit=5', { signal: newBooksAbortController.signal })
       if (!res.ok) throw new Error('Failed to load new books')
       const data = await res.json()
       const books = data.books || []
@@ -447,6 +452,7 @@
           </div>`
       }
     } catch (err) {
+      if (err.name === 'AbortError') return
       console.error('[cookster] new books error:', err)
       homeHtml = `
         <div class="empty empty-home">
@@ -546,7 +552,7 @@
       return
     }
     suggestionsEl.innerHTML = items.map((t, i) => `
-      <div class="suggestion-item" data-index="${i}" data-title="${escapeHtml(t)}">${highlightMatch(t, q)}</div>
+      <div class="suggestion-item" role="option" aria-selected="false" data-index="${i}" data-title="${escapeHtml(t)}">${highlightMatch(t, q)}</div>
     `).join('')
     suggestionsEl.classList.add('open')
     suggestionsEl.setAttribute('aria-hidden', 'false')
@@ -566,19 +572,26 @@
       closeSuggestions()
       return
     }
+    if (suggestAbortController) suggestAbortController.abort()
+    suggestAbortController = new AbortController()
     try {
-      const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`)
+      const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`, { signal: suggestAbortController.signal })
       if (!res.ok) throw new Error('suggest failed')
       const data = await res.json()
       renderSuggestions(data.suggestions || [], q)
     } catch (err) {
+      if (err.name === 'AbortError') return
       console.error('[cookster] suggest error:', err)
     }
   }
 
   function updateActiveSuggestion() {
     const items = suggestionsEl.querySelectorAll('.suggestion-item')
-    items.forEach((el, i) => el.classList.toggle('active', i === activeSuggestion))
+    items.forEach((el, i) => {
+      const active = i === activeSuggestion
+      el.classList.toggle('active', active)
+      el.setAttribute('aria-selected', String(active))
+    })
     if (activeSuggestion >= 0 && items[activeSuggestion]) {
       items[activeSuggestion].scrollIntoView({ block: 'nearest' })
     }
@@ -667,6 +680,8 @@
     }
 
     setBusy(true)
+    if (searchAbortController) searchAbortController.abort()
+    searchAbortController = new AbortController()
     try {
       const qParam = q ? `q=${encodeURIComponent(q)}` : 'q='
       const sourceParam = source ? `&source=${encodeURIComponent(source)}` : ''
@@ -676,7 +691,7 @@
       const pantryParam = (boostPantry && pantryItems.length) ? `&pantry=${encodeURIComponent(pantryItems.join(','))}` : ''
       const excludeParam = exclude ? `&exclude=${encodeURIComponent(exclude)}` : ''
       const haveParam = have ? `&have=${encodeURIComponent(have)}` : ''
-      const res = await fetch(`/search?${qParam}&page=${page}&limit=${limit}${sourceParam}${filterParam}${sortParam}${pantryParam}${excludeParam}${haveParam}`)
+      const res = await fetch(`/search?${qParam}&page=${page}&limit=${limit}${sourceParam}${filterParam}${sortParam}${pantryParam}${excludeParam}${haveParam}`, { signal: searchAbortController.signal })
       if (!res.ok) throw new Error(`Search failed (${res.status})`)
       const data = await res.json()
       totalResults = data.total || 0
@@ -731,18 +746,17 @@
         if (emptyRandom && randomBtn) {
           emptyRandom.addEventListener('click', () => randomBtn.click())
         }
-        bindCardActions()
         syncUrl(pushHistory)
         return
       }
 
       resultsEl.innerHTML = data.results.map(renderCard).join('')
-      bindCardActions()
       syncUrl(pushHistory)
       if (q) saveRecentSearch(q, filtersQuery(), sort)
       updateSaveSearchButton()
       if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
+      if (err.name === 'AbortError') return
       console.error('[cookster] search error:', err)
       resultsEl.innerHTML = `
         <div class="empty">
@@ -817,7 +831,6 @@
         </div>
         <div class="list-view-results">${ordered.map(renderCard).join('')}</div>
       `
-      bindCardActions()
       document.getElementById('back-to-search').addEventListener('click', () => {
         currentView = 'search'
         activeListId = null
@@ -834,76 +847,75 @@
     closeListsPanel()
   }
 
-  function bindFavButtons() {
-    resultsEl.querySelectorAll('.fav-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = btn.dataset.id
-        const nowFav = Lists.toggleFavorite(id)
-        btn.classList.toggle('active', nowFav)
-        btn.setAttribute('aria-label', nowFav ? 'Remove from favourites' : 'Add to favourites')
-        btn.textContent = heartIcon(nowFav)
-      })
-    })
-    resultsEl.querySelectorAll('.want-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = btn.dataset.id
-        const nowWant = Lists.toggleWantToTry(id)
-        btn.classList.toggle('active', nowWant)
-        btn.setAttribute('aria-label', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
-        btn.setAttribute('title', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
-        showToast(nowWant ? 'Added to Want to try' : 'Removed from Want to try')
-      })
-    })
+  async function handleResultsClick(e) {
+    const favBtn = e.target.closest('.fav-btn')
+    if (favBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = favBtn.dataset.id
+      const nowFav = Lists.toggleFavorite(id)
+      favBtn.classList.toggle('active', nowFav)
+      favBtn.setAttribute('aria-label', nowFav ? 'Remove from favourites' : 'Add to favourites')
+      favBtn.textContent = heartIcon(nowFav)
+      return
+    }
+
+    const wantBtn = e.target.closest('.want-btn')
+    if (wantBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = wantBtn.dataset.id
+      const nowWant = Lists.toggleWantToTry(id)
+      wantBtn.classList.toggle('active', nowWant)
+      wantBtn.setAttribute('aria-label', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
+      wantBtn.setAttribute('title', nowWant ? 'Remove from Want to try' : 'Add to Want to try')
+      showToast(nowWant ? 'Added to Want to try' : 'Removed from Want to try')
+      return
+    }
+
+    const addShoppingBtn = e.target.closest('.add-shopping')
+    if (addShoppingBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = addShoppingBtn.dataset.id
+      try {
+        const res = await fetch(`/api/recipes?ids=${id}`)
+        if (!res.ok) throw new Error('fetch failed')
+        const data = await res.json()
+        const r = data[0]
+        if (!r) return
+        const ingredients = parseIngredients(r.ingredients)
+        if (ingredients.length) {
+          Lists.addShoppingItems(ingredients, r.stable_id || String(r.id), r.source)
+          showToast(`Added ${ingredients.length} ingredient${ingredients.length === 1 ? '' : 's'} to shopping list`)
+        } else {
+          showToast('No ingredients found for this recipe')
+        }
+      } catch (err) {
+        console.error('[cookster] shopping error:', err)
+        showToast('Could not add ingredients')
+      }
+      return
+    }
+
+    const planMealBtn = e.target.closest('.plan-meal')
+    if (planMealBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = planMealBtn.dataset.id
+      const input = planMealBtn.parentElement.querySelector('.card-plan-date')
+      const date = input.value
+      if (!date) {
+        showToast('Pick a date first')
+        return
+      }
+      Lists.addMeal(date, id)
+      showToast('Added to meal plan')
+      input.value = ''
+    }
   }
 
-  async function bindCardActions() {
-    bindFavButtons()
-    resultsEl.querySelectorAll('.add-shopping').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = btn.dataset.id
-        try {
-          const res = await fetch(`/api/recipes?ids=${id}`)
-          if (!res.ok) throw new Error('fetch failed')
-          const data = await res.json()
-          const r = data[0]
-          if (!r) return
-          const ingredients = parseIngredients(r.ingredients)
-          if (ingredients.length) {
-            Lists.addShoppingItems(ingredients, r.stable_id || String(r.id), r.source)
-            showToast(`Added ${ingredients.length} ingredient${ingredients.length === 1 ? '' : 's'} to shopping list`)
-          } else {
-            showToast('No ingredients found for this recipe')
-          }
-        } catch (err) {
-          console.error('[cookster] shopping error:', err)
-          showToast('Could not add ingredients')
-        }
-      })
-    })
-
-    resultsEl.querySelectorAll('.plan-meal').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        const id = btn.dataset.id
-        const input = btn.parentElement.querySelector('.card-plan-date')
-        const date = input.value
-        if (!date) {
-          showToast('Pick a date first')
-          return
-        }
-        Lists.addMeal(date, id)
-        showToast('Added to meal plan')
-        input.value = ''
-      })
-    })
-  }
+  resultsEl.addEventListener('click', handleResultsClick)
 
   function showToast(message) {
     let toast = document.getElementById('cookster-toast')
