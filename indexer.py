@@ -20,6 +20,13 @@ try:
 except ImportError:
     pass
 
+try:
+    from PIL import Image as PILImage
+    _PIL_AVAILABLE = True
+except Exception:
+    PILImage = None
+    _PIL_AVAILABLE = False
+
 
 RECIPE_KEYS = [r'ingredients?', r'directions?', r'methods?', r'instructions?', r'preparation', r'steps']
 
@@ -4612,6 +4619,14 @@ def _extract_from_soup(soup: BeautifulSoup, epub_path: str, image_path: str = ''
         # images intentionally leave others blank rather than forcing a chapter-
         # opener or unrelated neighbour photo onto every recipe.
         has_extractor_image = any(r.get('image') for r in recipes)
+
+        # For generic extractors, try to map distinct images to individual recipes.
+        if matched_book_specific is False and recipes and saved_images:
+            _assign_per_recipe_images(soup, recipes, doc_name, saved_images, images_dir)
+            # If per-recipe mapping succeeded, don't blanket-fill with the doc image.
+            if any(r.get('image') for r in recipes):
+                has_extractor_image = True
+
         for r in recipes:
             if not r.get('image') and not has_extractor_image:
                 r['image'] = image_path
@@ -4680,9 +4695,84 @@ def _images_dir_for_epub(epub_path: str) -> str:
     return f"{slug}_{h}"
 
 
-def _save_epub_images(book: epub.EpubBook, images_dir: str) -> Dict[str, str]:
-    """Save image items from the EPUB to images_dir, preserving their relative
-    path. Return a mapping from the normalized image name (relative to EPUB root)
+# Image compression settings --------------------------------------------------
+_MAX_IMAGE_DIMENSION = 1200
+_JPEG_QUALITY = 82
+
+
+def _compress_image(content: bytes) -> bytes:
+    """Resize and recompress raster image bytes.
+
+    Returns the original bytes if compression fails or does not reduce size.
+    GIFs, SVGs, and very small icons are left untouched.
+    """
+    if not _PIL_AVAILABLE:
+        return content
+    try:
+        from io import BytesIO
+        original = BytesIO(content)
+        img = PILImage.open(original)
+        # Leave GIF animations / tiny icons alone.
+        if img.format == 'GIF' or img.width <= 64 or img.height <= 64:
+            return content
+        img.thumbnail((_MAX_IMAGE_DIMENSION, _MAX_IMAGE_DIMENSION), PILImage.LANCZOS)
+        out = BytesIO()
+        # Convert RGBA/palette to RGB for JPEG output.
+        if img.mode in ('RGBA', 'P', 'LA'):
+            background = PILImage.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'RGBA':
+                background.paste(img, mask=img.split()[3])
+            elif img.mode == 'LA':
+                background.paste(img, mask=img.split()[1])
+            else:
+                background.paste(img)
+            img = background
+        elif img.mode not in ('RGB', 'L'):
+            img = img.convert('RGB')
+        img.save(out, format='JPEG', quality=_JPEG_QUALITY, optimize=True)
+        compressed = out.getvalue()
+        return compressed if len(compressed) < len(content) else content
+    except Exception:
+        return content
+
+
+def _collect_referenced_images(book: epub.EpubBook) -> set:
+    """Return the set of normalized image paths referenced in document items.
+
+    Only images actually referenced by an <img> tag in the EPUB text are kept.
+    """
+    refs = set()
+    for item in book.get_items():
+        try:
+            if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+            html = item.get_content().decode('utf-8', errors='ignore')
+            soup = BeautifulSoup(html, 'lxml')
+            doc_name = item.get_name()
+            for img in soup.find_all('img'):
+                src = img.get('src') or ''
+                if not src:
+                    continue
+                src = unquote(src).replace('\\', '/').lstrip('/')
+                refs.add(src)
+                refs.add(os.path.basename(src))
+                if doc_name:
+                    doc_dir = os.path.dirname(doc_name.replace('\\', '/'))
+                    resolved = os.path.normpath(os.path.join(doc_dir, src)).replace('\\', '/')
+                    refs.add(resolved)
+        except Exception:
+            continue
+    return refs
+
+
+def _save_epub_images(book: epub.EpubBook, images_dir: str, referenced: set = None) -> Dict[str, str]:
+    """Save (and compress) referenced image items from the EPUB to images_dir.
+
+    Only images whose path or basename appears in ``referenced`` are written.
+    Images are resized to fit within ``_MAX_IMAGE_DIMENSION`` and saved as
+    quality-82 JPEG when this reduces file size.
+
+    Return a mapping from the normalized image name (relative to EPUB root)
     to the absolute file path where it was saved.
     """
     os.makedirs(images_dir, exist_ok=True)
@@ -4691,7 +4781,6 @@ def _save_epub_images(book: epub.EpubBook, images_dir: str) -> Dict[str, str]:
         try:
             if item.get_type() != ebooklib.ITEM_IMAGE:
                 continue
-            content = item.get_content()
             fname = None
             try:
                 fname = item.get_name()
@@ -4700,10 +4789,15 @@ def _save_epub_images(book: epub.EpubBook, images_dir: str) -> Dict[str, str]:
             if not fname:
                 continue
             fname = fname.replace('\\', '/').lstrip('/')
+            if referenced is not None:
+                if fname not in referenced and os.path.basename(fname) not in referenced:
+                    continue
+            content = item.get_content()
+            compressed = _compress_image(content)
             out_path = os.path.join(images_dir, fname)
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
             with open(out_path, 'wb') as f:
-                f.write(content)
+                f.write(compressed)
             # index by basename and by full relative path
             saved[fname] = out_path
             saved[os.path.basename(fname)] = out_path
@@ -4737,6 +4831,26 @@ def _resolve_image_path(src: str, doc_name: str, saved_images: Dict[str, str], i
     return ''
 
 
+def _image_path_to_relative(path: str) -> str:
+    """Convert an absolute or /static image path to a project-relative path.
+
+    Storing relative paths in JSON/DB makes the data portable and lets the API
+    decide how to serve it.
+    """
+    if not path:
+        return ''
+    norm = os.path.normpath(path).replace('\\', '/')
+    if norm.startswith('static/'):
+        return norm
+    if '/static/epub_images/' in norm:
+        return 'epub_images/' + norm.split('/static/epub_images/')[-1]
+    if norm.startswith('/static/'):
+        return norm[len('/static/'):]
+    if norm.startswith('/'):
+        return norm.lstrip('/')
+    return path
+
+
 def _image_path_to_url(path: str) -> str:
     """Convert a saved image path (absolute or relative to project root) to a
     URL under /static.
@@ -4747,6 +4861,9 @@ def _image_path_to_url(path: str) -> str:
     # relative path starting with static/
     if norm.startswith('static/'):
         return '/static/' + norm[len('static/'):]
+    # relative path starting with epub_images/ (stored in newer JSON/DB)
+    if norm.startswith('epub_images/'):
+        return '/static/' + norm
     # absolute path that contains a static/epub_images component
     if '/static/epub_images/' in norm:
         rel = norm.split('/static/')[-1]
@@ -4872,6 +4989,73 @@ def _map_images_to_titles(title_tags, images, direction: str = 'before',
     return assignments
 
 
+def _resolve_assigned_image(img, doc_name: str, saved_images: Dict[str, str], images_dir: str) -> str:
+    """Resolve an assigned img tag to a saved image file path."""
+    if img is None:
+        return ''
+    src = img.get('src') or ''
+    return _resolve_image_path(src, doc_name, saved_images, images_dir)
+
+
+def _assign_per_recipe_images(soup: BeautifulSoup, recipes: List[Dict], doc_name: str,
+                              saved_images: Dict[str, str], images_dir: str) -> None:
+    """Try to assign a distinct image to each recipe based on title elements.
+
+    Finds title-like elements in the soup, maps the nearest non-decorative image
+    to each title, then matches recipe titles to those elements.
+    """
+    if not recipes or not saved_images:
+        return
+
+    title_tags = []
+    for tag in soup.find_all(['h1', 'h2', 'h3', 'h4']):
+        text = _normalize_whitespace(tag.get_text(' ', strip=True))
+        if _is_title_like(text):
+            title_tags.append(tag)
+    # Paragraph titles are common in EPUB cookbooks.
+    for tag in soup.find_all('p'):
+        text = _normalize_whitespace(tag.get_text(' ', strip=True))
+        if _is_title_like(text):
+            title_tags.append(tag)
+    if not title_tags:
+        return
+
+    images = [img for img in soup.find_all('img') if not _is_decorative_image(img)]
+    assignments = _map_images_to_titles(title_tags, images, direction='before_or_after',
+                                        doc_name=doc_name, saved_images=saved_images,
+                                        images_dir=images_dir)
+    if not assignments:
+        return
+
+    # Map normalized title text -> resolved image path.
+    title_to_image: Dict[str, str] = {}
+    for tag, img in assignments.items():
+        text = _normalize_whitespace(tag.get_text(' ', strip=True)).lower()
+        path = _resolve_assigned_image(img, doc_name, saved_images, images_dir)
+        if path and text:
+            title_to_image[text] = path
+
+    if not title_to_image:
+        return
+
+    for recipe in recipes:
+        title = (recipe.get('title') or '').strip().lower()
+        if not title:
+            continue
+        # Exact match first.
+        if title in title_to_image:
+            recipe['image'] = title_to_image[title]
+            continue
+        # Fuzzy prefix/suffix match.
+        best = ''
+        for t, path in title_to_image.items():
+            if t.startswith(title) or title.startswith(t):
+                if len(t) > len(best):
+                    best = path
+        if best:
+            recipe['image'] = best
+
+
 def _find_image_for_doc(items: List, doc_idx: int, soup: BeautifulSoup, doc_name: str,
                         saved_images: Dict[str, str], images_dir: str) -> str:
     """Find a single representative image associated with a document.
@@ -4979,7 +5163,9 @@ def extract_recipes_from_file(file_path: str):
 
     file_basename = os.path.splitext(os.path.basename(file_path))[0]
     images_dir = os.path.join(os.path.dirname(__file__), 'static', 'epub_images', _images_dir_for_epub(file_path))
-    saved_images = _save_epub_images(book, images_dir)
+    # Only keep images that are actually referenced in the EPUB documents.
+    referenced = _collect_referenced_images(book)
+    saved_images = _save_epub_images(book, images_dir, referenced=referenced)
 
     items = list(book.get_items())
     doc_items = [(i, item) for i, item in enumerate(items) if item.get_type() == ebooklib.ITEM_DOCUMENT]
@@ -5069,14 +5255,14 @@ index_epub_dir = index_dir
 
 
 def _recipe_to_json(recipe: Dict) -> Dict:
-    """Return a JSON-serialisable recipe record with a /static image URL."""
+    """Return a JSON-serialisable recipe record with a project-relative image path."""
     return {
         'title': recipe['title'],
         'ingredients': recipe['ingredients'],
         'steps': recipe['steps'],
         'source': recipe['source'],
         'file_path': recipe['file_path'],
-        'image': _image_path_to_url(recipe.get('image', '')),
+        'image': _image_path_to_relative(recipe.get('image', '')),
         'serves': recipe.get('serves', ''),
     }
 
@@ -5127,8 +5313,15 @@ def _slug_for_path(path: str) -> str:
 
 
 def _cleanup_orphan_image_dirs(base_dir: str, current_image_dirs: set):
-    """Remove image directories under ``base_dir`` that no longer belong to an indexed book."""
+    """Remove image directories under ``base_dir`` that no longer belong to an indexed book.
+
+    Defensive: never delete everything. If ``current_image_dirs`` is empty, skip
+    cleanup so a partial indexing run doesn't wipe other books' images.
+    """
     if not os.path.isdir(base_dir):
+        return
+    if not current_image_dirs:
+        print('Skipping orphan cleanup: no current image directories known')
         return
     for name in os.listdir(base_dir):
         path = os.path.join(base_dir, name)
@@ -5140,7 +5333,8 @@ def _cleanup_orphan_image_dirs(base_dir: str, current_image_dirs: set):
         shutil.rmtree(path, ignore_errors=True)
 
 
-def preprocess_dir(books_dir: str, recipes_dir: str, force: bool = False):
+def preprocess_dir(books_dir: str, recipes_dir: str, force: bool = False,
+                  progress_callback=None):
     """Extract recipes and images from EPUBs and PDFs and write one JSON file per book.
 
     Images are saved under static/epub_images/ for EPUBs. PDFs have no images
@@ -5151,13 +5345,19 @@ def preprocess_dir(books_dir: str, recipes_dir: str, force: bool = False):
     not exist or is older than the source file. Set ``force=True`` to re-parse
     every book. JSON files and image directories for books that have been
     removed are deleted.
+
+    ``progress_callback`` receives dicts describing progress.
     """
     os.makedirs(recipes_dir, exist_ok=True)
     books: Dict[str, List[Dict]] = {}
     current_slugs = set()
     current_image_dirs = set()
 
-    for path in _unique_books(books_dir):
+    book_paths = _unique_books(books_dir)
+    if progress_callback:
+        progress_callback({'phase': 'preprocess', 'state': 'start', 'total': len(book_paths), 'current': 0, 'message': 'Preprocessing started'})
+
+    for i, path in enumerate(book_paths, start=1):
         slug = _slug_for_path(path)
         current_slugs.add(slug)
         current_image_dirs.add(_images_dir_for_epub(path))
@@ -5167,9 +5367,12 @@ def preprocess_dir(books_dir: str, recipes_dir: str, force: bool = False):
             src_mtime = os.path.getmtime(path)
             json_mtime = os.path.getmtime(out_path)
             if json_mtime >= src_mtime:
-                print('Skipping up-to-date', path)
+                if progress_callback:
+                    progress_callback({'phase': 'preprocess', 'state': 'book', 'current': i, 'total': len(book_paths), 'book': os.path.basename(path), 'skipped': True, 'message': f'Skipping up-to-date {path}'})
                 continue
 
+        if progress_callback:
+            progress_callback({'phase': 'preprocess', 'state': 'book', 'current': i, 'total': len(book_paths), 'book': os.path.basename(path), 'skipped': False, 'message': f'Preprocessing {path}'})
         print('Preprocessing', path)
         recs = extract_recipes_from_file(path)
         for r in recs:
@@ -5181,6 +5384,8 @@ def preprocess_dir(books_dir: str, recipes_dir: str, force: bool = False):
             print(f'Wrote {len(books[slug])} recipes to {out_path}')
         else:
             print(f'Wrote empty {out_path}')
+        if progress_callback:
+            progress_callback({'phase': 'preprocess', 'state': 'book', 'current': i, 'total': len(book_paths), 'book': os.path.basename(path), 'skipped': False, 'done': True, 'count': len(books.get(slug, [])), 'message': f'Wrote {len(books.get(slug, []))} recipes to {out_path}'})
 
     # Remove JSON files for books that no longer exist.
     for fn in os.listdir(recipes_dir):
@@ -5196,12 +5401,16 @@ def preprocess_dir(books_dir: str, recipes_dir: str, force: bool = False):
     image_base_dir = os.path.join(os.path.dirname(__file__), 'static', 'epub_images')
     _cleanup_orphan_image_dirs(image_base_dir, current_image_dirs)
 
+    if progress_callback:
+        progress_callback({'phase': 'preprocess', 'state': 'done', 'total': len(book_paths), 'current': len(book_paths), 'message': 'Preprocessing complete'})
+
 
 # Backwards-compatible alias
 preprocess_epub_dir = preprocess_dir
 
 
-def index_preprocessed_dir(recipes_dir: str, db_path: str, force: bool = False):
+def index_preprocessed_dir(recipes_dir: str, db_path: str, force: bool = False,
+                          progress_callback=None):
     """Load preprocessed JSON recipes into the SQLite database incrementally.
 
     Only books whose JSON file is new, changed, or missing from the DB are
@@ -5233,6 +5442,9 @@ def index_preprocessed_dir(recipes_dir: str, db_path: str, force: bool = False):
 
         current_sources = set(json_files.keys())
 
+        if progress_callback:
+            progress_callback({'phase': 'index', 'state': 'start', 'total': len(current_sources), 'current': 0, 'message': 'DB indexing started'})
+
         # Remove DB entries for books that no longer exist.
         for (source,) in c.execute('SELECT source FROM book_index_log'):
             if source not in current_sources:
@@ -5246,7 +5458,7 @@ def index_preprocessed_dir(recipes_dir: str, db_path: str, force: bool = False):
         conn.commit()
 
         # Index changed or new books.
-        for source in sorted(current_sources):
+        for i, source in enumerate(sorted(current_sources), start=1):
             path = json_files[source]
             slug = json_slugs[source]
             json_mtime = os.path.getmtime(path)
@@ -5254,8 +5466,12 @@ def index_preprocessed_dir(recipes_dir: str, db_path: str, force: bool = False):
             if not force:
                 row = c.execute('SELECT json_mtime FROM book_index_log WHERE source = ?', (source,)).fetchone()
                 if row and abs(row[0] - json_mtime) < 0.001:
+                    if progress_callback:
+                        progress_callback({'phase': 'index', 'state': 'book', 'current': i, 'total': len(current_sources), 'book': os.path.basename(path), 'skipped': True, 'message': f'Skipping up-to-date {path}'})
                     continue
 
+            if progress_callback:
+                progress_callback({'phase': 'index', 'state': 'book', 'current': i, 'total': len(current_sources), 'book': os.path.basename(path), 'skipped': False, 'message': f'Indexing {path}'})
             print('Indexing', path)
             with open(path, 'r', encoding='utf-8') as f:
                 recs = json.load(f)
@@ -5278,11 +5494,22 @@ def index_preprocessed_dir(recipes_dir: str, db_path: str, force: bool = False):
                              indexed_at=excluded.indexed_at''',
                       (source, slug, json_mtime, time.time()))
             conn.commit()
+            if progress_callback:
+                progress_callback({'phase': 'index', 'state': 'book', 'current': i, 'total': len(current_sources), 'book': os.path.basename(path), 'skipped': False, 'done': True, 'count': len(recs), 'message': f'Indexed {len(recs)} recipes from {path}'})
     finally:
         conn.close()
 
+    if progress_callback:
+        progress_callback({'phase': 'index', 'state': 'done', 'total': len(current_sources), 'current': len(current_sources), 'message': 'DB indexing complete'})
 
-def build_index(books_dir: str, recipes_dir: str, db_path: str, force: bool = False):
-    """Preprocess books into JSON (incremental by default), then load JSON into DB."""
-    preprocess_dir(books_dir, recipes_dir, force=force)
-    index_preprocessed_dir(recipes_dir, db_path, force=force)
+
+def build_index(books_dir: str, recipes_dir: str, db_path: str, force: bool = False,
+               progress_callback=None):
+    """Preprocess books into JSON (incremental by default), then load JSON into DB.
+
+    ``progress_callback`` receives small dicts: {'phase': 'preprocess'|'index',
+    'state': 'start'|'done'|'book', 'current': int, 'total': int, 'book': str,
+    'message': str}.
+    """
+    preprocess_dir(books_dir, recipes_dir, force=force, progress_callback=progress_callback)
+    index_preprocessed_dir(recipes_dir, db_path, force=force, progress_callback=progress_callback)

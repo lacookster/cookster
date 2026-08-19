@@ -6,7 +6,8 @@ import os
 import secrets
 import threading
 import time
-from typing import List, Tuple
+from contextlib import contextmanager
+from typing import Dict, List, Tuple
 
 try:
     import nltk
@@ -110,14 +111,6 @@ def _set_user_token(response: Response, token: str) -> None:
     )
 
 
-def _get_user_db() -> sqlite3.Connection:
-    """Return a connection to the dedicated user-data SQLite database."""
-    conn = sqlite3.connect(_USER_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    _ensure_user_data_schema(conn)
-    return conn
-
-
 def _ensure_user_data_schema(conn: sqlite3.Connection) -> None:
     """Create the user_data table if it does not exist."""
     c = conn.cursor()
@@ -135,7 +128,7 @@ def _load_user_data(token: str) -> dict:
         conn = _get_user_db()
         c = conn.cursor()
         row = c.execute('SELECT data, updated_at FROM user_data WHERE token = ?', (token,)).fetchone()
-        conn.close()
+        _release_user_db(conn)
         if row:
             return {'data': json.loads(row['data']), 'updated_at': row['updated_at']}
     except Exception:
@@ -146,20 +139,24 @@ def _load_user_data(token: str) -> dict:
 def _save_user_data(token: str, data: dict) -> None:
     """Persist a JSON blob for a user token."""
     conn = _get_user_db()
-    c = conn.cursor()
-    c.execute('INSERT INTO user_data (token, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(token) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
-              (token, json.dumps(data), time.time()))
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        c.execute('INSERT INTO user_data (token, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(token) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
+                  (token, json.dumps(data), time.time()))
+        conn.commit()
+    finally:
+        _release_user_db(conn)
 
 
 def _delete_user_data(token: str) -> None:
     """Delete all server-side data for a user token."""
     conn = _get_user_db()
-    c = conn.cursor()
-    c.execute('DELETE FROM user_data WHERE token = ?', (token,))
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        c.execute('DELETE FROM user_data WHERE token = ?', (token,))
+        conn.commit()
+    finally:
+        _release_user_db(conn)
 
 
 @app.middleware('http')
@@ -219,11 +216,102 @@ def get_user_data(request: Request):
     return response
 
 
+def _validate_user_data(data: dict) -> dict:
+    """Return a sanitized copy of the user-data payload.
+
+    Rejects obviously malformed payloads (non-dict root, wrong types for known
+    keys). Unknown keys are preserved to allow forward compatibility. Missing
+    known keys are **not** injected, so round-trips stay identical.
+    """
+    if not isinstance(data, dict):
+        raise ValueError('data must be an object')
+
+    def _str_list(val):
+        if not isinstance(val, list):
+            raise ValueError('must be an array')
+        return [str(x) for x in val]
+
+    def _dict_of_str(val):
+        if not isinstance(val, dict):
+            raise ValueError('must be an object')
+        return {str(k): str(v) if v is not None else '' for k, v in val.items()}
+
+    def _dict_of_list(val):
+        if not isinstance(val, dict):
+            raise ValueError('must be an object')
+        return {str(k): [str(x) for x in v] if isinstance(v, list) else [] for k, v in val.items()}
+
+    def _dict_of_int(val):
+        if not isinstance(val, dict):
+            raise ValueError('must be an object')
+        out = {}
+        for k, v in val.items():
+            try:
+                out[str(k)] = int(v)
+            except (TypeError, ValueError):
+                out[str(k)] = 0
+        return out
+
+    sanitized = {}
+    for key, val in data.items():
+        if key in ('favorites', 'wantToTry', 'tags', 'recentlyViewed'):
+            sanitized[key] = _str_list(val)
+        elif key == 'lists':
+            if not isinstance(val, list):
+                raise ValueError('lists must be an array')
+            sanitized[key] = []
+            for lst in val:
+                if not isinstance(lst, dict):
+                    raise ValueError('each list must be an object')
+                recipes = lst.get('recipes', [])
+                if not isinstance(recipes, list):
+                    recipes = []
+                sanitized[key].append({
+                    'id': str(lst.get('id', '')),
+                    'name': str(lst.get('name', '')),
+                    'recipes': [str(x) for x in recipes],
+                })
+        elif key == 'savedSearches':
+            if not isinstance(val, list):
+                raise ValueError('savedSearches must be an array')
+            for s in val:
+                if not isinstance(s, dict):
+                    raise ValueError('each saved search must be an object')
+            sanitized[key] = list(val)
+        elif key == 'pantry':
+            sanitized[key] = _str_list(val)
+        elif key == 'shopping':
+            if not isinstance(val, dict):
+                raise ValueError('shopping must be an object')
+            items = val.get('items', [])
+            if not isinstance(items, list):
+                items = []
+            sanitized[key] = {'items': items}
+        elif key == 'mealPlan':
+            sanitized[key] = _dict_of_list(val)
+        elif key in ('notes', 'cooked', 'substitutions', 'videoLinks'):
+            sanitized[key] = _dict_of_str(val)
+        elif key == 'ratings':
+            sanitized[key] = _dict_of_int(val)
+        elif key == 'updatedAt':
+            try:
+                sanitized[key] = int(val)
+            except (TypeError, ValueError):
+                sanitized[key] = 0
+        else:
+            # Preserve unknown keys.
+            sanitized[key] = val
+    return sanitized
+
+
 @app.post('/api/user-data')
 def save_user_data(request: Request, payload: dict):
     """Persist the current user's data blob."""
     token = _get_or_create_user_token(request)
-    data = payload.get('data', {})
+    try:
+        data = _validate_user_data(payload.get('data', {}))
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
     _save_user_data(token, data)
     response = JSONResponse({'ok': True})
     _set_user_token(response, token)
@@ -252,7 +340,11 @@ def import_user_data(request: Request, payload: dict):
         raise HTTPException(status_code=400, detail='token is required')
     provided_data = payload.get('data')
     if isinstance(provided_data, dict):
-        _save_user_data(token, provided_data)
+        try:
+            data = _validate_user_data(provided_data)
+        except ValueError as e:
+            return JSONResponse({'error': str(e)}, status_code=400)
+        _save_user_data(token, data)
     response = JSONResponse(_load_user_data(token))
     _set_user_token(response, token)
     return response
@@ -277,6 +369,137 @@ BOOKS_ADDED_DIR = os.path.join(BOOKS_DIR, 'added')
 
 # Dedicated SQLite DB for user data (favourites, lists, shopping, etc.)
 _USER_DB_PATH = os.path.join(DB_DIR, 'cookster_user_data.db')
+
+
+# SQLite connection pooling -----------------------------------------------------
+# FastAPI sync routes run in a thread pool; opening a new connection per
+# request is wasteful.  A small pool per DB path keeps warm connections ready.
+import queue as _queue
+
+
+class _ConnectionPool:
+    """A tiny per-path SQLite connection pool.
+
+    Connections are created lazily up to ``max_size`` and reused across requests.
+    Each connection is set to WAL mode and has its schema ensured on creation.
+    """
+
+    def __init__(self, db_path: str, max_size: int = 8, setup_fn=None):
+        self.db_path = db_path
+        self.max_size = max_size
+        self.setup_fn = setup_fn
+        self._pool: _queue.Queue = _queue.Queue(maxsize=max_size)
+        self._created = 0
+        self._lock = threading.Lock()
+
+    def _new_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        try:
+            conn.execute('PRAGMA journal_mode=WAL;')
+        except sqlite3.OperationalError:
+            pass
+        if self.setup_fn:
+            self.setup_fn(conn)
+        return conn
+
+    def get(self) -> sqlite3.Connection:
+        try:
+            return self._pool.get_nowait()
+        except _queue.Empty:
+            with self._lock:
+                if self._created < self.max_size:
+                    self._created += 1
+                    return self._new_conn()
+            # Pool is at capacity; block briefly for a return.
+            return self._pool.get(timeout=30)
+
+    def put(self, conn: sqlite3.Connection) -> None:
+        try:
+            self._pool.put_nowait(conn)
+        except _queue.Full:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._created = max(0, self._created - 1)
+
+
+_db_pools: Dict[str, _ConnectionPool] = {}
+_db_pool_lock = threading.Lock()
+
+
+def _get_pool(db_path: str, setup_fn=None) -> _ConnectionPool:
+    with _db_pool_lock:
+        pool = _db_pools.get(db_path)
+        if pool is None:
+            pool = _ConnectionPool(db_path, setup_fn=setup_fn)
+            _db_pools[db_path] = pool
+        return pool
+
+
+@contextmanager
+def db_connection(db_path: str, setup_fn=None):
+    """Get a reusable SQLite connection from the pool for ``db_path``."""
+    pool = _get_pool(db_path, setup_fn=setup_fn)
+    conn = pool.get()
+    try:
+        yield conn
+    finally:
+        pool.put(conn)
+
+
+# User-data DB is low-traffic but still benefits from pooling.
+# Pools are keyed by the current _USER_DB_PATH so tests that monkeypatch the
+# path get a fresh pool without keeping the old file open.
+_user_data_pools: Dict[str, _ConnectionPool] = {}
+
+
+def _get_user_data_pool() -> _ConnectionPool:
+    path = _USER_DB_PATH
+    with _db_pool_lock:
+        pool = _user_data_pools.get(path)
+        if pool is None:
+            pool = _ConnectionPool(path, max_size=4, setup_fn=_ensure_user_data_schema)
+            _user_data_pools[path] = pool
+        return pool
+
+
+def _get_user_db() -> sqlite3.Connection:
+    """Return a connection to the dedicated user-data SQLite database."""
+    pool = _get_user_data_pool()
+    conn = pool.get()
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _release_user_db(conn: sqlite3.Connection) -> None:
+    pool = _get_user_data_pool()
+    pool.put(conn)
+
+
+def _close_db_pools() -> None:
+    """Close all pooled SQLite connections. Useful for tests and shutdown."""
+    global _db_pools, _user_data_pools
+    with _db_pool_lock:
+        for pool in list(_db_pools.values()):
+            while not pool._pool.empty():
+                try:
+                    conn = pool._pool.get_nowait()
+                    conn.close()
+                except Exception:
+                    pass
+            pool._created = 0
+        _db_pools = {}
+        for pool in list(_user_data_pools.values()):
+            while not pool._pool.empty():
+                try:
+                    conn = pool._pool.get_nowait()
+                    conn.close()
+                except Exception:
+                    pass
+            pool._created = 0
+        _user_data_pools = {}
 
 
 def _is_under(path: str, base: str) -> bool:
@@ -725,20 +948,31 @@ def _levenshtein(a: str, b: str) -> int:
 
 # In-memory cache of common words from the current database.
 _SPELLING_VOCAB: set = set()
+_SPELLING_VOCAB_DB_PATH: str = ''
+_SPELLING_VOCAB_BUILT_AT: float = 0.0
+_SPELLING_VOCAB_TTL: float = 300.0  # rebuild every 5 minutes if DB may have changed
+
+
+def _invalidate_spelling_vocab() -> None:
+    """Clear the spelling vocabulary cache (call after re-indexing)."""
+    global _SPELLING_VOCAB, _SPELLING_VOCAB_DB_PATH, _SPELLING_VOCAB_BUILT_AT
+    _SPELLING_VOCAB = set()
+    _SPELLING_VOCAB_DB_PATH = ''
+    _SPELLING_VOCAB_BUILT_AT = 0.0
 
 
 def _build_spelling_vocab(db_path: str) -> set:
     """Build a vocabulary of words from recipe titles and ingredients."""
-    global _SPELLING_VOCAB
-    if _SPELLING_VOCAB:
+    global _SPELLING_VOCAB, _SPELLING_VOCAB_DB_PATH, _SPELLING_VOCAB_BUILT_AT
+    now = time.time()
+    if _SPELLING_VOCAB and _SPELLING_VOCAB_DB_PATH == db_path and now - _SPELLING_VOCAB_BUILT_AT < _SPELLING_VOCAB_TTL:
         return _SPELLING_VOCAB
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    try:
-        rows = c.execute("SELECT title, ingredients FROM recipes WHERE title IS NOT NULL OR ingredients IS NOT NULL").fetchall()
-    except sqlite3.OperationalError:
-        rows = []
-    conn.close()
+    with db_connection(db_path) as conn:
+        c = conn.cursor()
+        try:
+            rows = c.execute("SELECT title, ingredients FROM recipes WHERE title IS NOT NULL OR ingredients IS NOT NULL").fetchall()
+        except sqlite3.OperationalError:
+            rows = []
     vocab = set()
     for title, ingredients in rows:
         text = f"{(title or '')} {(ingredients or '')}"
@@ -746,22 +980,43 @@ def _build_spelling_vocab(db_path: str) -> set:
             if len(word) > 2:
                 vocab.add(word)
     _SPELLING_VOCAB = vocab
+    _SPELLING_VOCAB_DB_PATH = db_path
+    _SPELLING_VOCAB_BUILT_AT = now
     return vocab
 
 
 def _suggest_correction(q: str, vocab: set) -> str:
-    """Suggest a corrected query if the original returns no likely matches."""
+    """Suggest a corrected query if the original returns no likely matches.
+
+    Only considers vocabulary words that share the first letter and are within
+    ±2 characters of the token length, which dramatically reduces the search
+    space vs. scanning the entire vocabulary.
+    """
     if not vocab or not q:
         return ''
     tokens = q.lower().split()
     suggestions = []
+    # Pre-compute a prefix map once per vocab.
+    prefix_map = {}
+    for word in vocab:
+        if not word:
+            continue
+        key = (word[0], len(word))
+        prefix_map.setdefault(key, []).append(word)
     for token in tokens:
         if not token or token in vocab:
             suggestions.append(token)
             continue
         best = None
         best_score = 999
-        for word in vocab:
+        # Check words with the same first letter and length within ±2.
+        candidates = []
+        for delta in range(-2, 3):
+            candidates.extend(prefix_map.get((token[0], len(token) + delta), []))
+        if not candidates:
+            # Last-ditch: any word with the same first letter.
+            candidates = [w for w in vocab if w and w[0] == token[0]]
+        for word in candidates:
             dist = _levenshtein(token, word)
             if dist < best_score and dist <= max(1, len(token) // 3):
                 best_score = dist
@@ -772,12 +1027,9 @@ def _suggest_correction(q: str, vocab: set) -> str:
 
 
 def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str = None, filters: List[str] = None, sort: str = 'relevance', pantry: str = None, exclude: str = None, have: str = None):
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
     results = []
 
-    def _fetch_rows(where: str, params=()):
+    def _fetch_rows(c: sqlite3.Cursor, where: str, params=()):
         """Fetch candidate rows, gracefully handling DBs without image/serves columns."""
         base_cols = "id, title, source, ingredients, steps, stable_id, serves"
         try:
@@ -789,121 +1041,118 @@ def _query_db(db_path: str, q: str, limit: int = 10, page: int = 1, source: str 
             rows = c.fetchall()
             return [dict(id=r[0], title=r[1], source=r[2], ingredients=r[3] or '', steps=r[4] or '', stable_id=r[5] or '', serves='', image='') for r in rows]
 
-    source_filter = ''
-    source_params = []
-    if source:
-        source_filter = "WHERE source = ?"
-        source_params = [source]
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
 
-    use_fts = True
-    try:
-        safe_q = _sanitize_fts_query(q)
-        if safe_q:
-            c.execute(f"SELECT rowid FROM recipes_fts WHERE recipes_fts MATCH ?", (safe_q,))
-            ids = [r[0] for r in c.fetchall()]
-            if not ids:
-                conn.close()
-                return [], 0
-            if source_filter:
-                where = f"WHERE id IN ({','.join('?' for _ in ids)}) AND source = ?"
-                params = ids + [source]
+        source_filter = ''
+        source_params = []
+        if source:
+            source_filter = "WHERE source = ?"
+            source_params = [source]
+
+        use_fts = True
+        try:
+            safe_q = _sanitize_fts_query(q)
+            if safe_q:
+                c.execute("SELECT rowid FROM recipes_fts WHERE recipes_fts MATCH ?", (safe_q,))
+                ids = [r[0] for r in c.fetchall()]
+                if not ids:
+                    return [], 0
+                if source_filter:
+                    where = f"WHERE id IN ({','.join('?' for _ in ids)}) AND source = ?"
+                    params = ids + [source]
+                else:
+                    where = f"WHERE id IN ({','.join('?' for _ in ids)})"
+                    params = ids
+                candidates = _fetch_rows(c, where, params)
             else:
-                where = f"WHERE id IN ({','.join('?' for _ in ids)})"
-                params = ids
-            candidates = _fetch_rows(where, params)
-        else:
-            candidates = _fetch_rows(source_filter, source_params) if source_filter else _fetch_rows("")
+                # Avoid full-table scans for open-ended empty queries.
+                if source_filter:
+                    candidates = _fetch_rows(c, source_filter, source_params)
+                else:
+                    candidates = _fetch_rows(c, "LIMIT 5000", ())
+                use_fts = False
+        except sqlite3.OperationalError:
+            if source_filter:
+                candidates = _fetch_rows(c, source_filter, source_params)
+            else:
+                candidates = _fetch_rows(c, "LIMIT 5000", ())
             use_fts = False
-    except sqlite3.OperationalError:
-        candidates = _fetch_rows(source_filter, source_params) if source_filter else _fetch_rows("")
-        use_fts = False
 
-    # rank candidates with BM25, then apply positive/negative token and filter chips.
-    filters = filters or []
-    ranked = rank_recipes(candidates, q, top_n=len(candidates) if not use_fts else limit * page)
-    ranked = [c for c in ranked if _candidate_matches(c, q)]
-    for f in filters:
-        ranked = [c for c in ranked if _matches_filter(c, f)]
+        # rank candidates with BM25, then apply positive/negative token and filter chips.
+        filters = filters or []
+        ranked = rank_recipes(candidates, q, top_n=len(candidates) if not use_fts else limit * page)
+        ranked = [c for c in ranked if _candidate_matches(c, q)]
+        for f in filters:
+            ranked = [c for c in ranked if _matches_filter(c, f)]
 
-    # Exclude ingredients: drop candidates whose title, ingredients, or steps
-    # contain any excluded item as a whole word (case-insensitive).
-    exclude_items = [e.strip() for e in (exclude or '').split(',') if e.strip()]
-    if exclude_items:
-        def _is_excluded(c):
-            text = ((c.get('title') or '') + ' ' + (c.get('ingredients') or '') + ' ' + (c.get('steps') or '')).lower()
-            return any(_contains_whole_word(text, e) for e in exclude_items)
-        ranked = [c for c in ranked if not _is_excluded(c)]
+        # Exclude ingredients: drop candidates whose title, ingredients, or steps
+        # contain any excluded item as a whole word (case-insensitive).
+        exclude_items = [e.strip() for e in (exclude or '').split(',') if e.strip()]
+        if exclude_items:
+            def _is_excluded(c):
+                text = ((c.get('title') or '') + ' ' + (c.get('ingredients') or '') + ' ' + (c.get('steps') or '')).lower()
+                return any(_contains_whole_word(text, e) for e in exclude_items)
+            ranked = [c for c in ranked if not _is_excluded(c)]
 
-    # "What can I make?" mode: sort by percentage of provided ingredients found
-    # in the recipe's ingredients. Whole-word, case-insensitive matching.
-    have_items = [h.strip() for h in (have or '').split(',') if h.strip()]
-    if have_items:
-        for c in ranked:
-            ing = (c.get('ingredients') or '').lower()
-            matches = sum(1 for h in have_items if _contains_whole_word(ing, h))
-            c['have_match_count'] = matches
-            c['have_total'] = len(have_items)
-            c['have_match_pct'] = int(round(100 * matches / len(have_items)))
-        # Sort primarily by match percentage, then by existing relevance score.
-        ranked.sort(key=lambda c: (c.get('have_match_pct', 0), c.get('score', 0.0) or 0.0), reverse=True)
+        # "What can I make?" mode: sort by percentage of provided ingredients found
+        # in the recipe's ingredients. Whole-word, case-insensitive matching.
+        have_items = [h.strip() for h in (have or '').split(',') if h.strip()]
+        if have_items:
+            for c in ranked:
+                ing = (c.get('ingredients') or '').lower()
+                matches = sum(1 for h in have_items if _contains_whole_word(ing, h))
+                c['have_match_count'] = matches
+                c['have_total'] = len(have_items)
+                c['have_match_pct'] = int(round(100 * matches / len(have_items)))
 
-    # Small pantry boost: bonus for recipes that contain pantry items as whole words.
-    pantry_items = [p.strip() for p in (pantry or '').split(',') if p.strip()] if pantry else []
-    if pantry_items and sort == 'relevance':
-        for c in ranked:
-            ing = (c.get('ingredients') or '').lower()
-            bonus = sum(0.05 for p in pantry_items if re.search(r'\b' + re.escape(p.lower()) + r'\b', ing))
-            c['score'] = (c.get('score', 0.0) or 0.0) + bonus
-        ranked.sort(key=lambda c: c['score'], reverse=True)
+        # Small pantry boost: bonus for recipes that contain pantry items as whole words.
+        pantry_items = [p.strip() for p in (pantry or '').split(',') if p.strip()] if pantry else []
+        if pantry_items and sort == 'relevance' and not have_items:
+            for c in ranked:
+                ing = (c.get('ingredients') or '').lower()
+                bonus = sum(0.05 for p in pantry_items if re.search(r'\b' + re.escape(p.lower()) + r'\b', ing))
+                c['score'] = (c.get('score', 0.0) or 0.0) + bonus
 
-    # "What can I make?" mode: sort by percentage of provided ingredients found
-    # in the recipe's ingredients. Whole-word, case-insensitive matching.
-    have_items = [h.strip() for h in (have or '').split(',') if h.strip()]
-    if have_items:
-        for c in ranked:
-            ing = (c.get('ingredients') or '').lower()
-            matches = sum(1 for h in have_items if _contains_whole_word(ing, h))
-            c['have_match_count'] = matches
-            c['have_total'] = len(have_items)
-            c['have_match_pct'] = int(round(100 * matches / len(have_items)))
-        # Sort primarily by match percentage, then by existing relevance score.
-        ranked.sort(key=lambda c: (c.get('have_match_pct', 0), c.get('score', 0.0) or 0.0), reverse=True)
-
-    # apply sort order (have mode overrides to percentage sort)
-    sort = (sort or 'relevance').lower()
-    if not have_items:
-        if sort == 'az':
+        # apply final sort order
+        sort = (sort or 'relevance').lower()
+        if have_items:
+            ranked.sort(key=lambda c: (c.get('have_match_pct', 0), c.get('score', 0.0) or 0.0), reverse=True)
+        elif sort == 'az':
             ranked.sort(key=lambda c: (c.get('title') or '').lower())
         elif sort == 'recent':
             ranked.sort(key=lambda c: c.get('id', 0), reverse=True)
         elif sort == 'random':
             import random
             random.shuffle(ranked)
+        else:
+            # relevance: already sorted by rank_recipes, but pantry boost may need a re-sort
+            if pantry_items and sort == 'relevance':
+                ranked.sort(key=lambda c: c.get('score', 0.0) or 0.0, reverse=True)
 
-    total = len(ranked)
+        total = len(ranked)
 
-    # pagination
-    start = (page - 1) * limit
-    page_items = ranked[start:start + limit]
+        # pagination
+        start = (page - 1) * limit
+        page_items = ranked[start:start + limit]
 
-    for r in page_items:
-        results.append({
-            'id': r['id'],
-            'stable_id': r['stable_id'],
-            'title': r['title'],
-            'source': _clean_source(r['source']),
-            'source_raw': r['source'],
-            'serves': r.get('serves', ''),
-            'ingredients_snippet': _snippet(r.get('ingredients',''), q),
-            'steps_snippet': _snippet(r.get('steps',''), q),
-            'image_url': _image_path_to_url(r.get('image', '')),
-            'score': r.get('score', 0.0),
-            'have_match_count': r.get('have_match_count', 0),
-            'have_total': r.get('have_total', 0),
-            'have_match_pct': r.get('have_match_pct', 0),
-        })
-    conn.close()
-    return results, total
+        for r in page_items:
+            results.append({
+                'id': r['id'],
+                'stable_id': r['stable_id'],
+                'title': r['title'],
+                'source': _clean_source(r['source']),
+                'source_raw': r['source'],
+                'serves': r.get('serves', ''),
+                'ingredients_snippet': _snippet(r.get('ingredients',''), q),
+                'steps_snippet': _snippet(r.get('steps',''), q),
+                'image_url': _image_path_to_url(r.get('image', '')),
+                'score': r.get('score', 0.0),
+                'have_match_count': r.get('have_match_count', 0),
+                'have_total': r.get('have_total', 0),
+                'have_match_pct': r.get('have_match_pct', 0),
+            })
+        return results, total
 
 
 @app.get('/', response_class=HTMLResponse)
@@ -962,13 +1211,12 @@ def list_sources(db: str = Query('cookster.db')):
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    try:
-        rows = c.execute('SELECT DISTINCT source FROM recipes WHERE source IS NOT NULL AND source != ""').fetchall()
-    except sqlite3.OperationalError:
-        rows = []
-    conn.close()
+    with db_connection(db_path) as conn:
+        c = conn.cursor()
+        try:
+            rows = c.execute('SELECT DISTINCT source FROM recipes WHERE source IS NOT NULL AND source != ""').fetchall()
+        except sqlite3.OperationalError:
+            rows = []
     seen = set()
     sources = []
     for r in rows:
@@ -990,15 +1238,14 @@ def stats(db: str = Query('cookster.db')):
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    try:
-        total = c.execute('SELECT COUNT(*) FROM recipes').fetchone()[0]
-        books = c.execute('SELECT COUNT(DISTINCT source) FROM recipes WHERE source IS NOT NULL AND source != ""').fetchone()[0]
-    except sqlite3.OperationalError:
-        total = 0
-        books = 0
-    conn.close()
+    with db_connection(db_path) as conn:
+        c = conn.cursor()
+        try:
+            total = c.execute('SELECT COUNT(*) FROM recipes').fetchone()[0]
+            books = c.execute('SELECT COUNT(DISTINCT source) FROM recipes WHERE source IS NOT NULL AND source != ""').fetchone()[0]
+        except sqlite3.OperationalError:
+            total = 0
+            books = 0
     return {'total_recipes': total, 'total_books': books}
 
 
@@ -1018,36 +1265,33 @@ def batch_recipes(ids: str = Query(...), db: str = Query('cookster.db')):
     if len(raw) > 500:
         return JSONResponse({'error': 'too many ids (max 500)'}, status_code=400)
 
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
-
     # Split into integer ids and stable_ids.
     int_ids = [int(x) for x in raw if x.isdigit()]
     stable_ids = [x for x in raw if not x.isdigit()]
 
     base_cols = 'id, title, source, stable_id, ingredients, serves'
-    has_image = True
-    try:
-        cols = base_cols + ', image'
-        rows = []
-        if int_ids:
-            placeholders = ','.join('?' * len(int_ids))
-            rows += c.execute(f'SELECT {cols} FROM recipes WHERE id IN ({placeholders})', int_ids).fetchall()
-        if stable_ids:
-            placeholders = ','.join('?' * len(stable_ids))
-            rows += c.execute(f'SELECT {cols} FROM recipes WHERE stable_id IN ({placeholders})', stable_ids).fetchall()
-    except sqlite3.OperationalError:
-        has_image = False
-        cols = base_cols
-        rows = []
-        if int_ids:
-            placeholders = ','.join('?' * len(int_ids))
-            rows += c.execute(f'SELECT {cols} FROM recipes WHERE id IN ({placeholders})', int_ids).fetchall()
-        if stable_ids:
-            placeholders = ','.join('?' * len(stable_ids))
-            rows += c.execute(f'SELECT {cols} FROM recipes WHERE stable_id IN ({placeholders})', stable_ids).fetchall()
-    conn.close()
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
+        has_image = True
+        try:
+            cols = base_cols + ', image'
+            rows = []
+            if int_ids:
+                placeholders = ','.join('?' * len(int_ids))
+                rows += c.execute(f'SELECT {cols} FROM recipes WHERE id IN ({placeholders})', int_ids).fetchall()
+            if stable_ids:
+                placeholders = ','.join('?' * len(stable_ids))
+                rows += c.execute(f'SELECT {cols} FROM recipes WHERE stable_id IN ({placeholders})', stable_ids).fetchall()
+        except sqlite3.OperationalError:
+            has_image = False
+            cols = base_cols
+            rows = []
+            if int_ids:
+                placeholders = ','.join('?' * len(int_ids))
+                rows += c.execute(f'SELECT {cols} FROM recipes WHERE id IN ({placeholders})', int_ids).fetchall()
+            if stable_ids:
+                placeholders = ','.join('?' * len(stable_ids))
+                rows += c.execute(f'SELECT {cols} FROM recipes WHERE stable_id IN ({placeholders})', stable_ids).fetchall()
 
     seen = set()
     out = []
@@ -1077,10 +1321,8 @@ def recipe_view(request: Request, recipe_id: str, db: str = Query('cookster.db')
         return templates.TemplateResponse('recipe.html', {'request': request, 'error': str(e)})
     if not os.path.exists(db_path):
         return templates.TemplateResponse('recipe.html', {'request': request, 'error': 'DB not found'})
-    conn = sqlite3.connect(db_path)
-    _ensure_schema(conn)
-    recipe = _lookup_recipe(conn, recipe_id)
-    conn.close()
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        recipe = _lookup_recipe(conn, recipe_id)
     if not recipe:
         return templates.TemplateResponse('recipe.html', {'request': request, 'error': 'Recipe not found'})
     source_raw = recipe['source']
@@ -1107,10 +1349,8 @@ def download_recipe(recipe_id: str, db: str = Query('cookster.db')):
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found'}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    _ensure_schema(conn)
-    recipe = _lookup_recipe(conn, recipe_id)
-    conn.close()
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        recipe = _lookup_recipe(conn, recipe_id)
     if not recipe:
         return JSONResponse({'error': 'recipe not found'}, status_code=404)
 
@@ -1159,11 +1399,10 @@ def suggest(q: str = Query(..., min_length=1),
     safe = re.sub(r'[^\w\s]', '', q).strip()
     if not safe:
         return {'query': q, 'suggestions': []}
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
     like = f'%{safe}%'
-    rows = c.execute('SELECT title FROM recipes WHERE title LIKE ? ORDER BY title LIMIT ?', (like, limit)).fetchall()
-    conn.close()
+    with db_connection(db_path) as conn:
+        c = conn.cursor()
+        rows = c.execute('SELECT title FROM recipes WHERE title LIKE ? ORDER BY title LIMIT ?', (like, limit)).fetchall()
     return {'query': q, 'suggestions': [r[0] for r in rows]}
 
 
@@ -1190,24 +1429,74 @@ def random_recipe(db: str = Query('cookster.db')):
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
-    try:
-        row = c.execute('SELECT id, title, source, stable_id, image FROM recipes ORDER BY RANDOM() LIMIT 1').fetchone()
-    except sqlite3.OperationalError:
-        row = c.execute('SELECT id, title, source, stable_id FROM recipes ORDER BY RANDOM() LIMIT 1').fetchone()
-    conn.close()
-    if not row:
-        return JSONResponse({'error': 'no recipes'}, status_code=404)
-    has_image = len(row) >= 5
-    return {
-        'id': row[0],
-        'title': row[1],
-        'source': _clean_source(row[2]),
-        'stable_id': row[3],
-        'image_url': _image_path_to_url(row[4] if has_image else ''),
-    }
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
+        # Fast random-id lookup avoids a full table scan + ORDER BY RANDOM().
+        try:
+            max_row = c.execute('SELECT MAX(id) FROM recipes').fetchone()[0]
+        except sqlite3.OperationalError:
+            max_row = None
+        row = None
+        if max_row:
+            import random
+            for _ in range(10):
+                rid = random.randint(1, max_row)
+                try:
+                    row = c.execute('SELECT id, title, source, stable_id, image FROM recipes WHERE id >= ? LIMIT 1', (rid,)).fetchone()
+                except sqlite3.OperationalError:
+                    row = c.execute('SELECT id, title, source, stable_id FROM recipes WHERE id >= ? LIMIT 1', (rid,)).fetchone()
+                if row:
+                    break
+        if not row:
+            try:
+                row = c.execute('SELECT id, title, source, stable_id, image FROM recipes ORDER BY RANDOM() LIMIT 1').fetchone()
+            except sqlite3.OperationalError:
+                row = c.execute('SELECT id, title, source, stable_id FROM recipes ORDER BY RANDOM() LIMIT 1').fetchone()
+        if not row:
+            return JSONResponse({'error': 'no recipes'}, status_code=404)
+        has_image = len(row) >= 5
+        return {
+            'id': row[0],
+            'title': row[1],
+            'source': _clean_source(row[2]),
+            'stable_id': row[3],
+            'image_url': _image_path_to_url(row[4] if has_image else ''),
+        }
+
+
+def _related_candidate_ids(c: sqlite3.Cursor, target: dict, stable_id: str, raw_source: str, limit: int = 200):
+    """Return a limited set of candidate rowids for BM25 ranking.
+
+    Prefer FTS for fast pre-filtering; fall back to title/ingredient LIKE
+    with the longest words from the target title+ingredients.
+    """
+    query = (target.get('title') or '') + ' ' + (target.get('ingredients') or '')
+    safe = _sanitize_fts_query(query)
+    ids = set()
+    if safe:
+        try:
+            rows = c.execute('SELECT rowid FROM recipes_fts WHERE recipes_fts MATCH ? LIMIT ?', (safe, limit * 2)).fetchall()
+            ids = {r[0] for r in rows}
+        except sqlite3.OperationalError:
+            ids = set()
+    if ids:
+        # Exclude the target itself and same-book recipes from the candidate set.
+        return [rid for rid in ids if rid is not None]
+    # Fallback: pick a few of the longest significant words and LIKE-match.
+    words = sorted(set(re.findall(r'\b[a-z]{4,}\b', query.lower()) or []))
+    if not words:
+        return []
+    chosen = words[:6]
+    clauses = []
+    params = []
+    for w in chosen:
+        clauses.append('(title LIKE ? OR ingredients LIKE ?)')
+        params.extend([f'%{w}%', f'%{w}%'])
+    where = ' AND '.join(clauses)
+    sql = f"SELECT id FROM recipes WHERE stable_id != ? AND source != ? AND ({where}) LIMIT ?"
+    params = [stable_id, raw_source] + params + [limit]
+    rows = c.execute(sql, params).fetchall()
+    return [r[0] for r in rows]
 
 
 @app.get('/api/related/{stable_id}')
@@ -1219,78 +1508,81 @@ def related_recipes(stable_id: str, db: str = Query('cookster.db')):
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
-    target = _lookup_recipe(conn, stable_id)
-    if not target:
-        conn.close()
-        return JSONResponse({'error': 'recipe not found'}, status_code=404)
 
-    raw_source = target.get('source') or ''
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
+        target = _lookup_recipe(conn, stable_id)
+        if not target:
+            return JSONResponse({'error': 'recipe not found'}, status_code=404)
 
-    # More from the same book
-    try:
-        c.execute('SELECT id, title, source, stable_id, image FROM recipes WHERE source = ? AND stable_id != ? ORDER BY title LIMIT 6',
-                  (raw_source, stable_id))
-        rows = c.fetchall()
-    except sqlite3.OperationalError:
-        c.execute('SELECT id, title, source, stable_id FROM recipes WHERE source = ? AND stable_id != ? ORDER BY title LIMIT 6',
-                  (raw_source, stable_id))
-        rows = [(*r, '') for r in c.fetchall()]
+        raw_source = target.get('source') or ''
 
-    same_book = []
-    seen = {stable_id}
-    for r in rows:
-        sid = r[3]
-        if sid in seen:
-            continue
-        seen.add(sid)
-        same_book.append({
-            'id': r[0],
-            'title': r[1],
-            'source': _clean_source(r[2]),
-            'stable_id': sid,
-            'image_url': _image_path_to_url(r[4] or ''),
-        })
+        # More from the same book
+        try:
+            c.execute('SELECT id, title, source, stable_id, image FROM recipes WHERE source = ? AND stable_id != ? ORDER BY title LIMIT 6',
+                      (raw_source, stable_id))
+            rows = c.fetchall()
+        except sqlite3.OperationalError:
+            c.execute('SELECT id, title, source, stable_id FROM recipes WHERE source = ? AND stable_id != ? ORDER BY title LIMIT 6',
+                      (raw_source, stable_id))
+            rows = [(*r, '') for r in c.fetchall()]
 
-    # Similar recipes from other books using BM25 with the target's content as the query
-    candidates = []
-    try:
-        c.execute('SELECT id, title, source, stable_id, ingredients, steps, image FROM recipes WHERE stable_id != ? AND source != ?',
-                  (stable_id, raw_source))
-        rows = c.fetchall()
-    except sqlite3.OperationalError:
-        c.execute('SELECT id, title, source, stable_id, ingredients, steps FROM recipes WHERE stable_id != ? AND source != ?',
-                  (stable_id, raw_source))
-        rows = [(*r, '') for r in c.fetchall()]
-    for r in rows:
-        candidates.append({
-            'id': r[0],
-            'title': r[1],
-            'source': r[2],
-            'stable_id': r[3],
-            'ingredients': r[4] or '',
-            'steps': r[5] or '',
-            'image': r[6] or '',
-        })
+        same_book = []
+        seen = {stable_id}
+        for r in rows:
+            sid = r[3]
+            if sid in seen:
+                continue
+            seen.add(sid)
+            same_book.append({
+                'id': r[0],
+                'title': r[1],
+                'source': _clean_source(r[2]),
+                'stable_id': sid,
+                'image_url': _image_path_to_url(r[4] or ''),
+            })
 
-    query = (target.get('title') or '') + ' ' + (target.get('ingredients') or '')
-    ranked = rank_recipes(candidates, query, top_n=6)
-    similar = []
-    for r in ranked:
-        if r['stable_id'] in seen:
-            continue
-        seen.add(r['stable_id'])
-        similar.append({
-            'id': r['id'],
-            'title': r['title'],
-            'source': _clean_source(r['source']),
-            'stable_id': r['stable_id'],
-            'image_url': _image_path_to_url(r.get('image', '')),
-        })
+        # Similar recipes from other books using BM25 with the target's content as the query
+        candidate_ids = _related_candidate_ids(c, target, stable_id, raw_source, limit=200)
+        candidates = []
+        if candidate_ids:
+            placeholders = ','.join('?' for _ in candidate_ids)
+            try:
+                c.execute(
+                    f'SELECT id, title, source, stable_id, ingredients, steps, image FROM recipes WHERE id IN ({placeholders}) AND stable_id != ? AND source != ?',
+                    candidate_ids + [stable_id, raw_source])
+                rows = c.fetchall()
+            except sqlite3.OperationalError:
+                c.execute(
+                    f'SELECT id, title, source, stable_id, ingredients, steps FROM recipes WHERE id IN ({placeholders}) AND stable_id != ? AND source != ?',
+                    candidate_ids + [stable_id, raw_source])
+                rows = [(*r, '') for r in c.fetchall()]
+            for r in rows:
+                candidates.append({
+                    'id': r[0],
+                    'title': r[1],
+                    'source': r[2],
+                    'stable_id': r[3],
+                    'ingredients': r[4] or '',
+                    'steps': r[5] or '',
+                    'image': r[6] or '',
+                })
 
-    conn.close()
+        query = (target.get('title') or '') + ' ' + (target.get('ingredients') or '')
+        ranked = rank_recipes(candidates, query, top_n=6)
+        similar = []
+        for r in ranked:
+            if r['stable_id'] in seen:
+                continue
+            seen.add(r['stable_id'])
+            similar.append({
+                'id': r['id'],
+                'title': r['title'],
+                'source': _clean_source(r['source']),
+                'stable_id': r['stable_id'],
+                'image_url': _image_path_to_url(r.get('image', '')),
+            })
+
     return {'same_book': same_book, 'similar': similar}
 
 
@@ -1421,6 +1713,26 @@ def estimate_recipe_calories(recipe: dict) -> int:
     return round(total / servings)
 
 
+# Simple in-memory TTL cache for nutrition estimates, keyed by stable_id.
+_NUTRITION_CACHE: Dict[str, Tuple[int, float]] = {}
+_NUTRITION_CACHE_MAX = 1000
+_NUTRITION_CACHE_TTL = 3600
+
+
+def _get_cached_nutrition(stable_id: str):
+    entry = _NUTRITION_CACHE.get(stable_id)
+    if entry and time.time() - entry[1] < _NUTRITION_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _set_cached_nutrition(stable_id: str, cals: int) -> None:
+    if len(_NUTRITION_CACHE) >= _NUTRITION_CACHE_MAX:
+        oldest = min(_NUTRITION_CACHE, key=lambda k: _NUTRITION_CACHE[k][1])
+        del _NUTRITION_CACHE[oldest]
+    _NUTRITION_CACHE[stable_id] = (cals, time.time())
+
+
 @app.get('/api/nutrition/{recipe_id}')
 def nutrition_estimate(recipe_id: str, db: str = Query('cookster.db')):
     """Return an approximate calorie estimate per serving for a recipe."""
@@ -1430,13 +1742,17 @@ def nutrition_estimate(recipe_id: str, db: str = Query('cookster.db')):
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    _ensure_schema(conn)
-    recipe = _lookup_recipe(conn, recipe_id)
-    conn.close()
+
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        recipe = _lookup_recipe(conn, recipe_id)
     if not recipe:
         return JSONResponse({'error': 'recipe not found'}, status_code=404)
+    stable_id = recipe.get('stable_id') or str(recipe.get('id'))
+    cached = _get_cached_nutrition(stable_id)
+    if cached is not None:
+        return JSONResponse({'estimated_calories': cached, 'note': 'approximate'})
     cals = estimate_recipe_calories(recipe)
+    _set_cached_nutrition(stable_id, cals)
     return JSONResponse({
         'estimated_calories': cals,
         'note': 'approximate',
@@ -1457,25 +1773,23 @@ def recipes_by_source(
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'error': 'DB not found', 'db': db}, status_code=400)
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
     base_cols = 'id, title, source, stable_id, serves'
-    try:
-        cols = base_cols + ', image'
-        c.execute(f'SELECT {cols} FROM recipes WHERE source = ? ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?',
-                  (source, limit, (page - 1) * limit))
-        rows = c.fetchall()
-        c.execute('SELECT COUNT(*) FROM recipes WHERE source = ?', (source,))
-        total = c.fetchone()[0]
-    except sqlite3.OperationalError:
-        cols = base_cols
-        c.execute(f'SELECT {cols} FROM recipes WHERE source = ? ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?',
-                  (source, limit, (page - 1) * limit))
-        rows = c.fetchall()
-        c.execute('SELECT COUNT(*) FROM recipes WHERE source = ?', (source,))
-        total = c.fetchone()[0]
-    conn.close()
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
+        try:
+            cols = base_cols + ', image'
+            c.execute(f'SELECT {cols} FROM recipes WHERE source = ? ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?',
+                      (source, limit, (page - 1) * limit))
+            rows = c.fetchall()
+            c.execute('SELECT COUNT(*) FROM recipes WHERE source = ?', (source,))
+            total = c.fetchone()[0]
+        except sqlite3.OperationalError:
+            cols = base_cols
+            c.execute(f'SELECT {cols} FROM recipes WHERE source = ? ORDER BY title COLLATE NOCASE LIMIT ? OFFSET ?',
+                      (source, limit, (page - 1) * limit))
+            rows = c.fetchall()
+            c.execute('SELECT COUNT(*) FROM recipes WHERE source = ?', (source,))
+            total = c.fetchone()[0]
     results = []
     for r in rows:
         # Columns: id, title, source, stable_id, serves, image (6 total)
@@ -1505,41 +1819,40 @@ def books_list(request: Request, db: str = Query('cookster.db')):
         tmpl = templates.env.get_template('books.html')
         content = tmpl.render(request=request, error='DB not found')
         return HTMLResponse(content)
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
-    try:
-        rows = c.execute(
-            'SELECT source, COUNT(*) FROM recipes '
-            'WHERE source IS NOT NULL AND source != "" GROUP BY source ORDER BY source'
-        ).fetchall()
-    except sqlite3.OperationalError:
-        rows = []
-    # Pick one representative image per source for a cover thumbnail.
-    cover_images: Dict[str, str] = {}
-    try:
-        for raw_source, image in c.execute(
-            "SELECT source, image FROM recipes "
-            "WHERE image IS NOT NULL AND image != '' ORDER BY id"
-        ):
-            if raw_source not in cover_images:
-                cover_images[raw_source] = _image_path_to_url(image)
-    except sqlite3.OperationalError:
-        pass
     recipes_dir = os.path.join(DB_DIR, 'data', 'recipes')
-    books = []
-    seen = set()
-    for raw, count in rows:
-        if not raw or raw in seen:
-            continue
-        seen.add(raw)
-        books.append({
-            'raw': raw,
-            'clean': _clean_source(raw),
-            'count': count,
-            'image_url': cover_images.get(raw, ''),
-            'added_at': _source_added_at(raw, c, recipes_dir),
-        })
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
+        try:
+            rows = c.execute(
+                'SELECT source, COUNT(*) FROM recipes '
+                'WHERE source IS NOT NULL AND source != "" GROUP BY source ORDER BY source'
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        # Pick one representative image per source for a cover thumbnail.
+        cover_images: Dict[str, str] = {}
+        try:
+            for raw_source, image in c.execute(
+                "SELECT source, image FROM recipes "
+                "WHERE image IS NOT NULL AND image != '' ORDER BY id"
+            ):
+                if raw_source not in cover_images:
+                    cover_images[raw_source] = _image_path_to_url(image)
+        except sqlite3.OperationalError:
+            pass
+        books = []
+        seen = set()
+        for raw, count in rows:
+            if not raw or raw in seen:
+                continue
+            seen.add(raw)
+            books.append({
+                'raw': raw,
+                'clean': _clean_source(raw),
+                'count': count,
+                'image_url': cover_images.get(raw, ''),
+                'added_at': _source_added_at(raw, c, recipes_dir),
+            })
     books.sort(key=lambda x: x['clean'])
     new_books = sorted(
         [b for b in books if b['added_at'] > 0],
@@ -1560,37 +1873,34 @@ def api_new_books(request: Request, db: str = Query('cookster.db'), limit: int =
         return JSONResponse({'error': str(e)}, status_code=400)
     if not os.path.exists(db_path):
         return JSONResponse({'books': []})
-    conn = sqlite3.connect(db_path)
-    c = conn.cursor()
-    _ensure_schema(conn)
-    rows = c.execute(
-        'SELECT source, COUNT(*) FROM recipes '
-        'WHERE source IS NOT NULL AND source != "" GROUP BY source'
-    ).fetchall()
-    cover_images: Dict[str, str] = {}
-    try:
-        for raw_source, image in c.execute(
-            "SELECT source, image FROM recipes "
-            "WHERE image IS NOT NULL AND image != '' ORDER BY id"
-        ):
-            if raw_source not in cover_images:
-                cover_images[raw_source] = _image_path_to_url(image)
-    except sqlite3.OperationalError:
-        pass
-
     recipes_dir = os.path.join(DB_DIR, 'data', 'recipes')
-    books = []
-    for raw, count in rows:
-        if not raw:
-            continue
-        books.append({
-            'source': raw,
-            'title': _clean_source(raw),
-            'count': count,
-            'image_url': cover_images.get(raw, ''),
-            'added_at': _source_added_at(raw, c, recipes_dir),
-        })
-    conn.close()
+    with db_connection(db_path, setup_fn=_ensure_schema) as conn:
+        c = conn.cursor()
+        rows = c.execute(
+            'SELECT source, COUNT(*) FROM recipes '
+            'WHERE source IS NOT NULL AND source != "" GROUP BY source'
+        ).fetchall()
+        cover_images: Dict[str, str] = {}
+        try:
+            for raw_source, image in c.execute(
+                "SELECT source, image FROM recipes "
+                "WHERE image IS NOT NULL AND image != '' ORDER BY id"
+            ):
+                if raw_source not in cover_images:
+                    cover_images[raw_source] = _image_path_to_url(image)
+        except sqlite3.OperationalError:
+            pass
+        books = []
+        for raw, count in rows:
+            if not raw:
+                continue
+            books.append({
+                'source': raw,
+                'title': _clean_source(raw),
+                'count': count,
+                'image_url': cover_images.get(raw, ''),
+                'added_at': _source_added_at(raw, c, recipes_dir),
+            })
     books.sort(key=lambda x: x['added_at'], reverse=True)
     return JSONResponse({'books': books[:limit]})
 
@@ -1656,8 +1966,25 @@ def _run_indexer(books_dir: str, recipes_dir: str, db_path: str, force: bool):
             'books_total': 0,
             'books_done': 0,
         })
+
+    def _progress(payload):
+        with _index_lock:
+            total = payload.get('total') or _index_state['books_total']
+            current = payload.get('current') or _index_state['books_done']
+            if payload.get('state') == 'start':
+                _index_state['books_total'] = total
+            elif payload.get('state') == 'book':
+                _index_state['books_total'] = total
+                if payload.get('done'):
+                    _index_state['books_done'] = current
+            elif payload.get('state') == 'done':
+                _index_state['books_done'] = total
+            _index_state['message'] = payload.get('message', _index_state['message'])
+
     try:
-        build_index(books_dir, recipes_dir, db_path, force=force)
+        build_index(books_dir, recipes_dir, db_path, force=force, progress_callback=_progress)
+        _invalidate_spelling_vocab()
+        _NUTRITION_CACHE.clear()
         with _index_lock:
             _index_state.update({
                 'running': False,
@@ -1666,6 +1993,8 @@ def _run_indexer(books_dir: str, recipes_dir: str, db_path: str, force: bool):
                 'finished_at': time.time(),
             })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         with _index_lock:
             _index_state.update({
                 'running': False,

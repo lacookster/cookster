@@ -19,6 +19,7 @@ def _set_db_dir(path):
 
 def _restore_db_dir():
     api.DB_DIR = os.path.dirname(os.path.abspath(__file__))
+    api._close_db_pools()
 
 
 def make_db(path, epubs_dir=None):

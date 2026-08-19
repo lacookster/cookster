@@ -13,3 +13,4 @@ pypdf==6.15.0
 mobi==0.4.1
 itsdangerous==2.2.0
 python-multipart==0.0.20
+Pillow==10.4.0

@@ -21,6 +21,7 @@ def temp_user_db(monkeypatch):
     os.close(fd)
     monkeypatch.setattr(api, '_USER_DB_PATH', path)
     yield path
+    api._close_db_pools()
     try:
         os.remove(path)
     except FileNotFoundError:
