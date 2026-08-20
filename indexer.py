@@ -4531,6 +4531,912 @@ def _extract_nopalito_from_book(book: epub.EpubBook, epub_path: str, items: List
     return recipes
 
 
+# ---------------------------------------------------------------------------
+# Book-specific extractors: pasta and baking batch
+# ---------------------------------------------------------------------------
+
+_FRACTION_MAP = {
+    ('1', '2'): '½', ('1', '3'): '⅓', ('2', '3'): '⅔',
+    ('1', '4'): '¼', ('3', '4'): '¾', ('1', '5'): '⅕',
+    ('2', '5'): '⅖', ('3', '5'): '⅗', ('4', '5'): '⅘',
+    ('1', '6'): '⅙', ('5', '6'): '⅚', ('1', '8'): '⅛',
+    ('3', '8'): '⅜', ('5', '8'): '⅝', ('7', '8'): '⅞',
+}
+
+
+def _merge_fraction_spans(soup: BeautifulSoup):
+    """Collapse sup/sub fraction markup into single unicode fractions so
+    quantities read '2¼' instead of '2 1 / 4'. Handles '<span class="sup">1</
+    span>/<span class="sub">4</span>', '<sup>1</sup>/<sub>4</sub>' and nested
+    '<sup><span>1</span></sup>/<sub><span>4</span></sub>' variants."""
+    from bs4.element import NavigableString, Tag
+    candidates = list(soup.find_all('sup'))
+    candidates += [s for s in soup.find_all('span', class_='sup') if s.find_parent('sup') is None]
+    for sup in candidates:
+        num = sup.get_text(strip=True)
+        slash = sup.next_sibling
+        if not (isinstance(slash, NavigableString) and str(slash).strip() in ('/', '⁄')):
+            continue
+        sub = slash.next_sibling
+        if not (isinstance(sub, Tag) and (sub.name == 'sub' or 'sub' in (sub.get('class') or []))):
+            continue
+        frac = _FRACTION_MAP.get((num, sub.get_text(strip=True)))
+        if not frac:
+            continue
+        sup.replace_with(NavigableString(frac))
+        slash.replace_with(NavigableString(''))
+        sub.replace_with(NavigableString(''))
+
+
+def _new_recipe_dict(epub_path: str) -> Dict:
+    return {
+        'title': '',
+        'ingredients': [],
+        'steps': [],
+        'serves': '',
+        'source': os.path.basename(epub_path),
+        'file_path': epub_path,
+        'image': '',
+    }
+
+
+def _finish_recipe_dict(recipes: List[Dict], cur: Dict, min_ingredients: int = 2, min_steps: int = 1):
+    """Quality-gate and normalise a partially built recipe dict, then append it."""
+    if cur and len(cur.get('ingredients', [])) >= min_ingredients and len(cur.get('steps', [])) >= min_steps:
+        recipes.append({
+            'title': cur['title'],
+            'ingredients': '\n'.join(cur['ingredients']).strip(),
+            'steps': '\n'.join(cur['steps']).strip(),
+            'source': cur['source'],
+            'file_path': cur['file_path'],
+            'image': cur.get('image', ''),
+            'serves': cur.get('serves', '').strip(),
+        })
+
+
+def _extract_sfoglino_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                         doc_name: str = '', saved_images: Dict[str, str] = None,
+                                         images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Evan Funke's 'American Sfoglino'.
+
+    A recipe starts at an h2/h3/h4.section_hd (Italian name), optionally
+    followed by a same-level .chapter_title heading (English name). The yield
+    is p.yield, ingredients are p.ingred_sublist(t) and steps p.method_txt.
+    Essay chapters also use h3.section_hd but have no ingredient/method
+    paragraphs, so the quality gate drops them.
+    """
+    _merge_fraction_spans(soup)
+    recipes = []
+    body = soup.body or soup
+    title_tags = [el for el in body.find_all(['h2', 'h3', 'h4'])
+                  if 'section_hd' in (el.get('class') or [])]
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='after',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    for i, tag in enumerate(title_tags):
+        italian = _normalize_whitespace(tag.get_text(' ', strip=True))
+        if not italian:
+            continue
+        english = ''
+        nxt = tag.find_next(['h2', 'h3', 'h4'])
+        if nxt is not None and nxt.name == tag.name and 'chapter_title' in (nxt.get('class') or []):
+            english = _normalize_whitespace(nxt.get_text(' ', strip=True))
+        title = italian
+        if english and english.lower() != italian.lower():
+            title = f'{italian} ({english})'
+
+        boundary = title_tags[i + 1] if i + 1 < len(title_tags) else None
+        cur = _new_recipe_dict(epub_path)
+        cur['title'] = title
+        for el in tag.find_all_next(['p', 'h2', 'h3', 'h4']):
+            if el is boundary:
+                break
+            if el.name != 'p':
+                continue
+            cls = set(el.get('class') or [])
+            text = _normalize_whitespace(el.get_text(' ', strip=True))
+            if not text:
+                continue
+            if 'yield' in cls:
+                cur['serves'] = text
+            elif cls & {'ingred_sublistt', 'ingred_sublist'}:
+                cur['ingredients'].append(text)
+            elif 'method_txt' in cls:
+                cur['steps'].append(text)
+        cur['image'] = _resolve_assigned_image(title_images.get(tag), doc_name, saved_images, images_dir)
+        _finish_recipe_dict(recipes, cur, min_ingredients=1)
+    return recipes
+
+
+def _extract_flour_water_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                            doc_name: str = '', saved_images: Dict[str, str] = None,
+                                            images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Thomas McNaughton's 'Flour + Water: Pasta'.
+
+    Recipes live in div.recipe blocks (plus sidebar recipes in
+    div.recipe_background): h1.recipe_title / h1.recipe_title_background
+    title, div.yield, h3.IL_subheader component headings, div.IL_item
+    ingredients and div.method_step steps. The recipe photo sits in a
+    div.recipe_image right before the recipe block.
+    """
+    recipes = []
+    body = soup.body or soup
+    blocks = body.find_all('div', class_=['recipe', 'recipe_background'])
+    if not blocks:
+        return recipes
+
+    title_tags = []
+    for block in blocks:
+        h = block.find('h1', class_=['recipe_title', 'recipe_title_background'])
+        if h:
+            title_tags.append(h)
+    title_images = {}
+    if saved_images and title_tags:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='before',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    for block in blocks:
+        h = block.find('h1', class_=['recipe_title', 'recipe_title_background'])
+        if not h:
+            continue
+        title = _normalize_whitespace(h.get_text(' ', strip=True))
+        if not title:
+            continue
+        # recipe_background sidebars with long all-caps titles are essays that
+        # merely mention a technique (e.g. 'BIGOLI, THE TORCHIO, AND ...');
+        # genuine sidebar recipes have short title-case names.
+        if 'recipe_background' in (block.get('class') or []):
+            letters = re.findall(r'[A-Za-z]', title)
+            if len(title) > 40 and letters and all(c.isupper() for c in letters):
+                continue
+        cur = _new_recipe_dict(epub_path)
+        cur['title'] = title
+        for el in block.find_all(['h3', 'div']):
+            cls = set(el.get('class') or [])
+            text = _normalize_whitespace(el.get_text(' ', strip=True))
+            if not text:
+                continue
+            if el.name == 'h3':
+                if 'IL_subheader' in cls:
+                    cur['ingredients'].append('--- ' + text)
+                continue
+            if 'IL_item' in cls:
+                cur['ingredients'].append(text)
+            elif 'method_step' in cls:
+                cur['steps'].append(text)
+            elif 'yield' in cls and not cur['serves']:
+                cur['serves'] = text
+        cur['image'] = _resolve_assigned_image(title_images.get(h), doc_name, saved_images, images_dir)
+        _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_mastering_pasta_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                                doc_name: str = '', saved_images: Dict[str, str] = None,
+                                                images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Marc Vetri's 'Mastering Pasta'.
+
+    Each div.recipe_title starts a recipe; until the next one, div.yield is
+    the yield, div.IL_item are ingredients and div.method_step are steps.
+    Recipe photos (div.recipe_image / div.med_img) appear inside the recipe
+    flow after the steps.
+    """
+    recipes = []
+    body = soup.body or soup
+    title_tags = body.find_all('div', class_='recipe_title')
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='after',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    cur = None
+    for el in body.find_all('div'):
+        cls = set(el.get('class') or [])
+        text = _normalize_whitespace(el.get_text(' ', strip=True))
+        if 'recipe_title' in cls:
+            _finish_recipe_dict(recipes, cur)
+            cur = _new_recipe_dict(epub_path)
+            cur['title'] = text
+            cur['image'] = _resolve_assigned_image(title_images.get(el), doc_name, saved_images, images_dir)
+            continue
+        if cur is None or not text:
+            continue
+        if 'ingredients' in cls:
+            continue  # container div holding the IL_item children
+        if 'yield' in cls:
+            if not cur['serves']:
+                cur['serves'] = text
+        elif 'IL_item' in cls:
+            cur['ingredients'].append(text)
+        elif 'method_step' in cls:
+            cur['steps'].append(text)
+        elif 'B_head' in cls:
+            cur['steps'].append('--- ' + text)
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_pasta_by_hand_recipes(soup: BeautifulSoup, epub_path: str) -> List[Dict]:
+    """Extract recipes from Jenn Louis's 'Pasta by Hand'.
+
+    One recipe per chapter document: h1.chapter_title title, p.yield,
+    p.ingredients items, and steps in p.method_txt with p.text_indent
+    continuations. p.center lines are sauce-pairing notes and are skipped.
+    """
+    _merge_fraction_spans(soup)
+    title_tag = soup.find('h1', class_='chapter_title')
+    if not title_tag:
+        return []
+    title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+    if not title:
+        return []
+    cur = _new_recipe_dict(epub_path)
+    cur['title'] = title
+    for p in soup.find_all('p'):
+        cls = set(p.get('class') or [])
+        text = _normalize_whitespace(p.get_text(' ', strip=True))
+        if not text:
+            continue
+        if 'yield' in cls:
+            cur['serves'] = text
+        elif 'ingredients' in cls:
+            cur['ingredients'].append(text)
+        elif cls & {'method_txt', 'text_indent'}:
+            cur['steps'].append(text)
+    recipes = []
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_pasta_by_hand_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    recipes = _extract_pasta_by_hand_recipes(soup, epub_path)
+    for r in recipes:
+        r['image'] = image_path
+    return recipes
+
+
+def _extract_heavenly_cakes_from_book(book: epub.EpubBook, epub_path: str, items: List,
+                                      saved_images: Dict[str, str], images_dir: str) -> List[Dict]:
+    """Stream the split HTML docs of Wiley's 'Rose's Heavenly Cakes' into recipes.
+
+    Every split page carries a div.recipeCulinaryTitle. A page that also has a
+    div.calibre1 headnote or a div.recipeTime starts a new main recipe; other
+    titled pages (Batter, Topping, ...) are components of the current recipe.
+    Ingredients live in table.dummies-table rows (name + volume columns) and
+    method steps in p.unnumbered paragraphs. Sidebar content is ignored.
+    """
+    recipes = []
+    cur = None
+    cur_promoted = False
+
+    def _finalize():
+        nonlocal cur, cur_promoted
+        _finish_recipe_dict(recipes, cur)
+        cur = None
+        cur_promoted = False
+
+    def _has_ingredient_table(soup) -> bool:
+        for tbl in soup.find_all('table', class_='dummies-table'):
+            header_row = tbl.find('tr')
+            header_texts = ([td.get_text(' ', strip=True).lower()
+                             for td in header_row.find_all('td')] if header_row else [])
+            if 'volume' in header_texts:
+                return True
+        return False
+
+    for item in items:
+        try:
+            if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
+        except Exception:
+            continue
+        try:
+            html = item.get_content().decode('utf-8', errors='ignore')
+        except Exception:
+            continue
+        soup = BeautifulSoup(html, 'lxml')
+        doc_name = item.get_name()
+
+        if soup.find('p', class_='chap-title'):
+            _finalize()
+            continue
+
+        title_tag = soup.find('div', class_='recipeCulinaryTitle')
+        if title_tag is not None:
+            title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+            is_main = bool(soup.find('div', class_='calibre1') or soup.find('div', class_='recipeTime'))
+            promoted = False
+            if not is_main and (cur is None or cur_promoted) and _has_ingredient_table(soup):
+                # A titled page with its own ingredient table that is not part
+                # of a full recipe (e.g. the back-matter basics chapter, where
+                # every page is an independent small recipe) stands alone.
+                is_main = True
+                promoted = True
+            if is_main:
+                _finalize()
+                cur = _new_recipe_dict(epub_path)
+                cur['title'] = title
+                cur_promoted = promoted
+                yield_tag = soup.find('div', class_='recipeYield')
+                if yield_tag:
+                    cur['serves'] = _normalize_whitespace(yield_tag.get_text(' ', strip=True))
+            elif cur is not None and title:
+                cur['ingredients'].append('--- ' + title)
+                cur['steps'].append('--- ' + title)
+
+        if cur is None:
+            continue
+
+        if not cur.get('image'):
+            for img in soup.find_all('img'):
+                if _is_decorative_image(img):
+                    continue
+                candidate = _resolve_image_path(img.get('src') or '', doc_name, saved_images, images_dir)
+                if candidate:
+                    cur['image'] = candidate
+                    break
+
+        # Content belonging to the recipe starts after its title (when the doc
+        # has one). An essay/sidebar heading (p.heading, p.heading1, p.sb-head)
+        # marks the end of the recipe within the doc.
+        if title_tag is not None:
+            content_elems = title_tag.find_all_next(['table', 'p', 'div'])
+        else:
+            content_elems = soup.find_all(['table', 'p', 'div'])
+
+        for el in content_elems:
+            if el.find_parent('div', class_='sidebar'):
+                continue
+            if el.name == 'p' and set(el.get('class') or []) & {'heading', 'heading1', 'heading2', 'sb-head'}:
+                break
+            if el.name == 'table' and 'dummies-table' in (el.get('class') or []):
+                # Only genuine ingredient tables have a Volume column header;
+                # altitude charts and reference tables share the same styling.
+                header_row = el.find('tr')
+                header_texts = []
+                if header_row:
+                    header_texts = [td.get_text(' ', strip=True).lower() for td in header_row.find_all('td')]
+                if 'volume' not in header_texts:
+                    continue
+                for tr in el.find_all('tr'):
+                    tds = tr.find_all('td')
+                    if not tds:
+                        continue
+                    if 'tb-col-head' in (tds[0].get('class') or []):
+                        continue
+                    name = _normalize_whitespace(tds[0].get_text(' ', strip=True))
+                    vol = _normalize_whitespace(tds[1].get_text(' ', strip=True)) if len(tds) > 1 else ''
+                    if not name:
+                        continue
+                    if vol and vol not in ('.', '•', '-'):
+                        cur['ingredients'].append(f'{name} — {vol}')
+                    else:
+                        cur['ingredients'].append(name)
+                continue
+            if el.name == 'div':
+                if 'recipeVariationRecipeTitle' in (el.get('class') or []):
+                    text = _normalize_whitespace(el.get_text(' ', strip=True))
+                    if text:
+                        cur['steps'].append('--- Variation: ' + text)
+                continue
+            # p.unnumbered paragraphs are the method steps; p.para inside a
+            # variation describes the variation and reads like a step.
+            cls = set(el.get('class') or [])
+            if 'unnumbered' not in cls and not ('para' in cls and el.find_parent('div', class_='recipeVariation')):
+                continue
+            text = _normalize_whitespace(el.get_text(' ', strip=True))
+            if text:
+                cur['steps'].append(text)
+
+    _finalize()
+    return recipes
+
+
+def _extract_heavenly_cakes_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '') -> List[Dict]:
+    # Rose's Heavenly Cakes recipes span many small split files, so extraction
+    # happens book-wide in _extract_heavenly_cakes_from_book (called from
+    # extract_recipes_from_file). This per-document extractor intentionally
+    # returns nothing; its registration only stops the generic extractors.
+    return []
+
+
+_CAKE_BIBLE_META_LABEL = re.compile(
+    r'^(PAN TYPE|FINISHED HEIGHT|STORE|COMPLEMENTARY ADORNMENT|SERVE|'
+    r'POINTERS FOR SUCCESS|SPECIAL EQUIPMENT|OPTIONAL|NOTE|TIMING)\b', re.I)
+_CAKE_BIBLE_STOP_LABEL = re.compile(r'^(UNDERSTANDING|VARIATIONS)\b', re.I)
+
+
+def _cake_bible_food_image(soup: BeautifulSoup, title: str, doc_name: str,
+                           saved_images: Dict[str, str], images_dir: str) -> str:
+    """Find the recipe photo in a Cake Bible document.
+
+    Food photos are JPEGs, usually with a caption naming the recipe; pan
+    diagrams and technique figures are PNGs and are never used.
+    """
+    title_key = re.sub(r'[^a-z0-9]+', ' ', title.lower()).strip()
+    for cap in soup.find_all('p', class_=['caption', 'subcaption']):
+        cap_text = re.sub(r'[^a-z0-9]+', ' ', cap.get_text(' ', strip=True).lower())
+        if title_key and title_key in cap_text:
+            img = cap.find_previous('img')
+            if img:
+                resolved = _resolve_image_path(img.get('src') or '', doc_name, saved_images, images_dir)
+                if resolved:
+                    return resolved
+    for img in soup.find_all('img'):
+        src = img.get('src') or ''
+        if not src.lower().endswith(('.jpg', '.jpeg')):
+            continue
+        resolved = _resolve_image_path(src, doc_name, saved_images, images_dir)
+        if resolved:
+            return resolved
+    return ''
+
+
+def _extract_cake_bible_recipes(soup: BeautifulSoup, epub_path: str,
+                                doc_name: str = '', saved_images: Dict[str, str] = None,
+                                images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Rose Levy Beranbaum's 'The Cake Bible'.
+
+    One recipe per document: h1.chaptertitle title, a 'SERVES n' p.center, and
+    a 4-column ingredient table (tr.ING / tr.ING-background rows of
+    ingredient | volume | ounces | grams). Method steps are the p.left/p.follow
+    paragraphs after the table; pan/store/serve/pointers meta blocks, the
+    'UNDERSTANDING' essay and 'VARIATIONS' are excluded.
+
+    Showcase cakes have no ingredient table: their 'CAKE COMPONENTS' list is
+    used as ingredients and the 'METHOD FOR ASSEMBLING CAKE' paragraphs as
+    steps.
+    """
+    title_tag = soup.find('h1', class_='chaptertitle')
+    if not title_tag:
+        return []
+    title = _normalize_whitespace(title_tag.get_text(' ', strip=True))
+    if not title:
+        return []
+
+    cur = _new_recipe_dict(epub_path)
+    cur['title'] = title
+    for p in soup.find_all('p', class_='center'):
+        text = _normalize_whitespace(p.get_text(' ', strip=True))
+        if re.match(r'^(SERVES|MAKES|YIELD)\b', text, re.I):
+            cur['serves'] = text
+            break
+
+    table = soup.find('table')
+    # Only genuine recipe tables start with an INGREDIENTS header row; chapter
+    # introductions and reference chapters (ingredients, equipment, formulas)
+    # carry informational tables with different headers.
+    if table is not None:
+        first_row = table.find('tr')
+        first_cell = first_row.find('td') if first_row else None
+        header = _normalize_whitespace(first_cell.get_text(' ', strip=True)) if first_cell else ''
+        if header.upper() != 'INGREDIENTS':
+            table = None
+    if table is not None:
+        for tr in table.find_all('tr'):
+            cells = [_normalize_whitespace(td.get_text(' ', strip=True)) for td in tr.find_all('td')]
+            if not cells or not cells[0]:
+                continue
+            if cells[0].upper() == 'INGREDIENTS' or cells[0].lower() == 'room temperature':
+                continue
+            if len(cells) > 1 and cells[1].upper() in ('MEASURE', 'VOLUME'):
+                continue
+            if len(cells) < 2:
+                cur['ingredients'].append('--- ' + cells[0])
+                continue
+            measure = cells[1] if cells[1] not in ('•', '.', '-') else ''
+            cur['ingredients'].append(f'{cells[0]} — {measure}' if measure else cells[0])
+
+        # Method steps follow the table; meta blocks (pan type, store, serve,
+        # pointers) are skipped, including the description line that follows a
+        # label-only paragraph.
+        skip_next = False
+        for p in table.find_all_next(['p', 'h1']):
+            if p.name == 'h1':
+                break
+            if not (set(p.get('class') or []) & {'left', 'follow'}):
+                continue
+            text = _normalize_whitespace(p.get_text(' ', strip=True))
+            if not text:
+                continue
+            if _CAKE_BIBLE_STOP_LABEL.match(text):
+                break
+            if _CAKE_BIBLE_META_LABEL.match(text):
+                skip_next = len(text) < 45 or text.endswith(':')
+                continue
+            if skip_next:
+                skip_next = False
+                continue
+            cur['steps'].append(text)
+    else:
+        # Showcase cake: component list + assembly method.
+        mode = 'skip'
+        for p in title_tag.find_all_next(['p', 'h1']):
+            if p.name == 'h1':
+                break
+            if not (set(p.get('class') or []) & {'left', 'follow'}):
+                continue
+            text = _normalize_whitespace(p.get_text(' ', strip=True))
+            if not text:
+                continue
+            if re.match(r'^CAKE COMPONENTS\b', text, re.I):
+                mode = 'ing'
+                continue
+            if re.match(r'^METHOD FOR ASSEMBLING\b', text, re.I):
+                mode = 'steps'
+                continue
+            if _CAKE_BIBLE_META_LABEL.match(text) or _CAKE_BIBLE_STOP_LABEL.match(text):
+                mode = 'skip'
+                continue
+            if mode == 'ing':
+                cur['ingredients'].append(text)
+            elif mode == 'steps':
+                cur['steps'].append(text)
+
+    if saved_images:
+        cur['image'] = _cake_bible_food_image(soup, title, doc_name, saved_images, images_dir)
+    recipes = []
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_cake_bible_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                           doc_name: str = '', saved_images: Dict[str, str] = None,
+                                           images_dir: str = '') -> List[Dict]:
+    # Per-recipe food photos are picked inside _extract_cake_bible_recipes;
+    # pan diagrams (the per-document fallback image) are never forced on.
+    return _extract_cake_bible_recipes(soup, epub_path, doc_name, saved_images, images_dir)
+
+
+def _extract_baked_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                      doc_name: str = '', saved_images: Dict[str, str] = None,
+                                      images_dir: str = '') -> List[Dict]:
+    """Extract recipes from 'Baked: New Frontiers in Baking'.
+
+    Recipes start at h3.h3cap / h3.h3a titles. p.recipe1 is the yield,
+    p.recipe2 a component heading, p.recipea/p.recipe ingredients,
+    p.noindentmake a method heading and p.noindent1(b/c) the steps.
+    'BAKED NOTE' boxes and sidebars are skipped. Food photos (fNNNN-NN.jpg)
+    sit right before the title.
+    """
+    recipes = []
+    body = soup.body or soup
+    title_tags = [el for el in body.find_all('h3') if set(el.get('class') or []) & {'h3cap', 'h3a'}]
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img')
+                  if re.search(r'/f\d{4}-\d+\.jpe?g', img.get('src') or '', re.I)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='before',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    cur = None
+    for el in body.find_all(['h3', 'p']):
+        cls = set(el.get('class') or [])
+        text = _normalize_whitespace(el.get_text(' ', strip=True))
+        if el.name == 'h3':
+            if cls & {'h3cap', 'h3a'}:
+                _finish_recipe_dict(recipes, cur)
+                cur = _new_recipe_dict(epub_path)
+                cur['title'] = text
+                cur['image'] = _resolve_assigned_image(title_images.get(el), doc_name, saved_images, images_dir)
+            continue
+        if cur is None or not text:
+            continue
+        if 'recipe1' in cls:
+            cur['serves'] = text
+        elif 'recipe2' in cls:
+            cur['ingredients'].append('--- ' + text)
+        elif cls & {'recipea', 'recipe'}:
+            cur['ingredients'].append(text)
+        elif 'noindentmake' in cls:
+            cur['steps'].append(text)
+        elif cls & {'noindent1', 'noindent1b', 'noindent1c'}:
+            cur['steps'].append(text)
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_sallys_cookies_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                               doc_name: str = '', saved_images: Dict[str, str] = None,
+                                               images_dir: str = '') -> List[Dict]:
+    """Extract recipes from 'Sally's Cookie Addiction'.
+
+    Recipes start at h3.h3a-h3f/h3r/h3ra titles (letter-spaced small-cap
+    markup, read without separators). p.prep* holds the prep/yield line,
+    p.item/p.itemb are ingredients, p.item-head a component heading, and
+    p.nlisti/p.nlist1i the numbered steps. MAKE-AHEAD TIP and SALLY SAYS boxes
+    are skipped. Quantities use sup/sub fraction spans which are merged into
+    unicode fractions first.
+    """
+    _merge_fraction_spans(soup)
+    recipes = []
+    body = soup.body or soup
+    title_tags = [el for el in body.find_all('h3')
+                  if any(re.fullmatch(r'h3[a-z]+', c) for c in (el.get('class') or []))]
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img')
+                  if re.search(r'/f\d{4}-\d+\.jpe?g', img.get('src') or '', re.I)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='before',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    cur = None
+    for el in body.find_all(['h3', 'p']):
+        text = _normalize_whitespace(el.get_text('', strip=False) if el.name == 'h3'
+                                     else el.get_text(' ', strip=True))
+        if el.name == 'h3':
+            if any(re.fullmatch(r'h3[a-z]+', c) for c in (el.get('class') or [])):
+                _finish_recipe_dict(recipes, cur)
+                cur = _new_recipe_dict(epub_path)
+                title = re.sub(r'\s+([,.;:!?])', r'\1', text).lstrip('◁ ').strip()
+                cur['title'] = title
+                cur['image'] = _resolve_assigned_image(title_images.get(el), doc_name, saved_images, images_dir)
+            continue
+        if cur is None or not text:
+            continue
+        cls = set(el.get('class') or [])
+        if any(re.fullmatch(r'prep[a-z]?', c) for c in cls):
+            m = re.search(r'YIELD:\s*(.+)$', text, re.I)
+            cur['serves'] = m.group(1).strip() if m else text
+        elif 'item-head' in cls:
+            cur['ingredients'].append('--- ' + text)
+        elif cls & {'item', 'itemb'}:
+            cur['ingredients'].append(text)
+        elif cls & {'nlisti', 'nlist1i'}:
+            cur['steps'].append(text)
+        elif 'noindent' in cls and cur['ingredients']:
+            cur['steps'].append(text)
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_good_to_grain_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                              doc_name: str = '', saved_images: Dict[str, str] = None,
+                                              images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Kim Boyce's 'Good to the Grain'.
+
+    Recipes start at h3.h3a titles. p.center holds 'SERVES n'/'MAKES n',
+    p.cook1 is an ingredient or a component heading (text ending in ':'),
+    p.cook are ingredients and p.numberlist(t) the numbered steps. Notes and
+    tip boxes are skipped. Food photos (fNNNN-NN.jpg) precede the title.
+    """
+    recipes = []
+    body = soup.body or soup
+    title_tags = body.find_all('h3', class_='h3a')
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img')
+                  if re.search(r'/f\d{4}-\d+\.jpe?g', img.get('src') or '', re.I)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='before',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    cur = None
+    for el in body.find_all(['h3', 'p']):
+        cls = set(el.get('class') or [])
+        text = _normalize_whitespace(el.get_text(' ', strip=True))
+        if el.name == 'h3':
+            if 'h3a' in cls:
+                _finish_recipe_dict(recipes, cur)
+                cur = _new_recipe_dict(epub_path)
+                cur['title'] = text
+                cur['image'] = _resolve_assigned_image(title_images.get(el), doc_name, saved_images, images_dir)
+            continue
+        if cur is None or not text:
+            continue
+        if 'center' in cls and re.match(r'^(SERVES|MAKES|YIELD)\b', text, re.I):
+            cur['serves'] = text
+        elif 'cook1' in cls:
+            if text.endswith(':'):
+                cur['ingredients'].append('--- ' + text)
+            else:
+                cur['ingredients'].append(text)
+        elif 'cook' in cls:
+            cur['ingredients'].append(text)
+        elif cls & {'numberlistt', 'numberlist'}:
+            cur['steps'].append(text)
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_fwsy_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                     doc_name: str = '', saved_images: Dict[str, str] = None,
+                                     images_dir: str = '') -> List[Dict]:
+    """Extract recipes from Ken Forkish's 'Flour Water Salt Yeast'.
+
+    Each div.recipe_title starts a recipe. div.yield is the yield line,
+    ingredients come from the recipe table (ingredient | weight | volume |
+    baker's % rows), and steps are div.step / div.step_extract /
+    div.step_indent. Fermentation schedules (div.yield1), headnotes and
+    sidebars are skipped. The recipe photo and its caption sit right before
+    the title.
+    """
+    recipes = []
+    body = soup.body or soup
+    title_tags = body.find_all('div', class_='recipe_title')
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='before',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    cur = None
+    for el in body.find_all(['div', 'table']):
+        cls = set(el.get('class') or [])
+        if 'recipe_title' in cls:
+            _finish_recipe_dict(recipes, cur)
+            cur = _new_recipe_dict(epub_path)
+            cur['title'] = _normalize_whitespace(el.get_text(' ', strip=True))
+            cur['image'] = _resolve_assigned_image(title_images.get(el), doc_name, saved_images, images_dir)
+            continue
+        if cur is None:
+            continue
+        if el.name == 'table':
+            for tr in el.find_all('tr'):
+                cells = [_normalize_whitespace(td.get_text(' ', strip=True))
+                         for td in tr.find_all(['td', 'th'])]
+                if not cells or not cells[0]:
+                    continue
+                if cells[0].upper() == 'INGREDIENT':
+                    continue
+                if len(cells) < 3:
+                    cur['ingredients'].append('--- ' + cells[0])
+                    continue
+                qty = cells[1]
+                vol = cells[2]
+                line = cells[0]
+                if qty:
+                    line += f' — {qty}'
+                if vol:
+                    line += f' ({vol})'
+                cur['ingredients'].append(line)
+            continue
+        text = _normalize_whitespace(el.get_text(' ', strip=True))
+        if not text:
+            continue
+        if 'yield' in cls:
+            if not cur['serves']:
+                cur['serves'] = text
+        elif 'ingredients_list' in cls:
+            continue  # container div holding the IL_item children
+        elif 'IL_item' in cls:
+            cur['ingredients'].append(text)
+        elif any(c.startswith('step') for c in cls):
+            cur['steps'].append(text)
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
+def _extract_vegan_cupcakes_recipes_with_image(soup: BeautifulSoup, epub_path: str, image_path: str = '',
+                                               doc_name: str = '', saved_images: Dict[str, str] = None,
+                                               images_dir: str = '') -> List[Dict]:
+    """Extract recipes from 'Vegan Cupcakes Take Over the World'.
+
+    Recipes start at h1.h1 titles with an optional h2.h1 subtitle ('with ...')
+    or 'MAKES 12 CUPCAKES' yield line. 'INGREDIENTS' / 'DIRECTIONS' marker
+    divs (div.tx1.sgc-1) switch sections; ingredients are <br>-separated lines
+    in div.atx1.tx1, steps are div.lsl1. 'Variations' blocks and decorating
+    sidebars are skipped. Non-recipe chapters (ingredient guides, equipment)
+    have no INGREDIENTS/DIRECTIONS markers and fall out through the gate.
+    """
+    from bs4.element import NavigableString
+    recipes = []
+    body = soup.body or soup
+    title_tags = [el for el in body.find_all('h1') if 'h1' in (el.get('class') or [])]
+    if not title_tags:
+        return recipes
+
+    title_images = {}
+    if saved_images:
+        images = [img for img in body.find_all('img') if not _is_decorative_image(img)]
+        title_images = _map_images_to_titles(
+            title_tags, images, direction='after',
+            doc_name=doc_name, saved_images=saved_images, images_dir=images_dir)
+
+    cur = None
+    mode = 'off'
+
+    def _add_atx_ingredients(div):
+        for br in div.find_all('br'):
+            br.replace_with(NavigableString('\n'))
+        for line in div.get_text().split('\n'):
+            line = _normalize_whitespace(line)
+            if not line:
+                continue
+            qty_start = re.match(r'^[\d¼½¾⅓⅔⅛⅜⅝⅞⅕⅖⅗⅘⅙⅚]', line)
+            paren_open = (cur['ingredients'] and
+                          cur['ingredients'][-1].count('(') > cur['ingredients'][-1].count(')'))
+            if cur['ingredients'] and (paren_open or (not qty_start and line[0].islower())):
+                # Continuation of a wrapped ingredient line.
+                cur['ingredients'][-1] += ' ' + line
+            else:
+                cur['ingredients'].append(line)
+
+    for el in body.find_all(['h1', 'h2', 'div']):
+        cls = set(el.get('class') or [])
+        text = _normalize_whitespace(el.get_text(' ', strip=True))
+        if el.name == 'h1' and 'h1' in cls:
+            _finish_recipe_dict(recipes, cur)
+            cur = _new_recipe_dict(epub_path)
+            title = _normalize_whitespace(el.get_text('', strip=False))
+            cur['title'] = re.sub(r'\s+([,.;:!?])', r'\1', title)
+            cur['image'] = _resolve_assigned_image(title_images.get(el), doc_name, saved_images, images_dir)
+            mode = 'head'
+            continue
+        if cur is None or not text:
+            continue
+        if el.name == 'h2' and 'h1' in cls:
+            if re.match(r'^MAKES\b', text, re.I):
+                cur['serves'] = text
+            elif not cur['ingredients'] and not cur['steps']:
+                sub = _normalize_whitespace(el.get_text('', strip=False))
+                cur['title'] += ' ' + re.sub(r'\s+([,.;:!?])', r'\1', sub)
+            continue
+        if el.name != 'div':
+            continue
+        if 'ctag1' in cls and re.match(r'^MAKES\b', text, re.I):
+            cur['serves'] = text
+            continue
+        if 'tx1' in cls:
+            upper = text.upper()
+            if upper == 'INGREDIENTS':
+                mode = 'ing'
+                continue
+            if upper == 'DIRECTIONS':
+                mode = 'steps'
+                continue
+            if upper.startswith(('TO MAKE', 'TO ASSEMBLE')) and mode == 'steps' and len(text) < 60:
+                cur['steps'].append(text)
+                continue
+            if text.lower().startswith('variation'):
+                mode = 'off'
+                continue
+            if mode == 'ing' and text.lower().startswith('for the') and len(text) < 60:
+                cur['ingredients'].append('--- ' + text)
+                continue
+            if 'atx1' in cls:
+                if mode in ('ing', 'steps'):
+                    _add_atx_ingredients(el)
+                continue
+            if mode == 'ing' and re.match(r'^[\d¼½¾⅓⅔⅛⅜⅝⅞⅕⅖⅗⅘⅙⅚]', text):
+                # Some recipes list their ingredients in a plain div.tx1 block.
+                _add_atx_ingredients(el)
+                continue
+        if 'lsl1' in cls and mode == 'steps':
+            cur['steps'].append(text)
+    _finish_recipe_dict(recipes, cur)
+    return recipes
+
+
 # Register extractors in priority order: schema.org first, then known book
 # extractors, then generic paragraph/heading/fallback extractors.
 register_extractor(_schema_org_predicate, _extract_schema_org_recipes, 'schema.org')
@@ -4579,6 +5485,17 @@ register_extractor(_source_predicate('new kitchen'), _extract_image_only_book_re
 register_extractor(_source_predicate('forest feast'), _extract_image_only_book_recipes_with_image, 'forest feast')
 register_extractor(_source_predicate('nopalito'), _extract_nopalito_recipes_with_image, 'nopalito')
 register_extractor(_source_predicate('jerusalem'), _extract_jerusalem_recipes_with_image, 'jerusalem')
+register_extractor(_source_predicate('american sfoglino'), _extract_sfoglino_recipes_with_image, 'american sfoglino')
+register_extractor(_source_predicate('flour + water'), _extract_flour_water_recipes_with_image, 'flour + water')
+register_extractor(_source_predicate('mastering pasta'), _extract_mastering_pasta_recipes_with_image, 'mastering pasta')
+register_extractor(_source_predicate('pasta by hand'), _extract_pasta_by_hand_recipes_with_image, 'pasta by hand')
+register_extractor(_source_predicate('heavenly cakes'), _extract_heavenly_cakes_recipes_with_image, "rose's heavenly cakes")
+register_extractor(_source_predicate('cake bible'), _extract_cake_bible_recipes_with_image, 'the cake bible')
+register_extractor(_source_predicate('baked_'), _extract_baked_recipes_with_image, 'baked new frontiers')
+register_extractor(_source_predicate('cookie addiction'), _extract_sallys_cookies_recipes_with_image, "sally's cookie addiction")
+register_extractor(_source_predicate('good to the grain'), _extract_good_to_grain_recipes_with_image, 'good to the grain')
+register_extractor(_source_predicate('flour water salt yeast'), _extract_fwsy_recipes_with_image, 'flour water salt yeast')
+register_extractor(_source_predicate('vegan cupcakes'), _extract_vegan_cupcakes_recipes_with_image, 'vegan cupcakes take over the world')
 register_extractor(_always_true_predicate, _extract_paragraph_recipes_with_image, 'paragraph')
 register_extractor(_always_true_predicate, _extract_heading_recipes_with_image, 'heading')
 register_extractor(_always_true_predicate, _extract_fallback_with_image, 'fallback', is_fallback=True)
@@ -5175,6 +6092,11 @@ def extract_recipes_from_file(file_path: str):
     # the next page.
     if 'nopalito' in file_basename.lower():
         return _extract_nopalito_from_book(book, file_path, items, saved_images, images_dir)
+
+    # Rose's Heavenly Cakes (Wiley) is likewise split into many small files,
+    # with component pages (Batter, Topping, ...) belonging to the main recipe.
+    if 'heavenly cakes' in file_basename.lower():
+        return _extract_heavenly_cakes_from_book(book, file_path, items, saved_images, images_dir)
 
     for idx, item in doc_items:
         try:
