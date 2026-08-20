@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Browse books | Cookster</title>
     <link rel="icon" type="image/jpeg" href="/static/cookster-logo.jpg">
+    <link rel="preload" as="image" href="/static/cookster-logo.jpg">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="stylesheet" href="/static/style.css">
   </head>
@@ -95,7 +96,7 @@
     <aside id="lists-panel" class="lists-panel" aria-hidden="true">
       <div class="lists-panel-header">
         <h2>My Lists</h2>
-        <button id="lists-close" class="icon-btn" aria-label="Close"><span class="icon" data-icon="x"></span></button>
+        <button id="lists-close" class="icon-btn" aria-label="Close" title="Close"><span class="icon" data-icon="x"></span></button>
       </div>
       <div class="lists-panel-body">
         <section class="list-section">

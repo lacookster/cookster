@@ -76,17 +76,35 @@
     if (listsBackdrop) listsBackdrop.addEventListener('click', closeListsPanel)
   }
 
+  function initMobileNav() {
+    const items = document.querySelectorAll('.mobile-nav-item')
+    if (!items.length) return
+    const path = location.pathname
+    items.forEach(item => {
+      const href = item.getAttribute('href')
+      if (!href) return
+      const itemPath = new URL(href, location.origin).pathname
+      const match = itemPath === '/' ? path === '/' : path.startsWith(itemPath)
+      if (match) {
+        item.classList.add('active')
+        item.setAttribute('aria-current', 'page')
+      }
+    })
+  }
+
   function init() {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => {
         if (root.CooksterIcons) root.CooksterIcons.initIcons()
         initTheme()
         initListsPanel()
+        initMobileNav()
       })
     } else {
       if (root.CooksterIcons) root.CooksterIcons.initIcons()
       initTheme()
       initListsPanel()
+      initMobileNav()
     }
   }
 

@@ -259,6 +259,16 @@
     } catch (err) {
       if (err.name === 'AbortError') return
       console.error('[cookster] related error:', err)
+      const relatedWrap = document.querySelector('.related-recipes')
+      if (relatedWrap) {
+        relatedWrap.innerHTML = `
+          <div class="empty-state empty-state-small">
+            <span class="icon empty-state-icon" data-icon="alert" aria-hidden="true"></span>
+            <p>Could not load related recipes right now.</p>
+          </div>
+        `
+        if (window.CooksterIcons) window.CooksterIcons.initIcons(relatedWrap)
+      }
     }
   }
 
@@ -910,6 +920,17 @@
     if (e.key === 'Escape' && lightbox && lightbox.classList.contains('open')) closeLightbox()
   })
 
+  // Back to top --------------------------------------------------------------
+  const backToTopBtn = document.getElementById('back-to-top')
+  if (backToTopBtn) {
+    const updateBackToTop = () => {
+      backToTopBtn.hidden = window.scrollY <= 400
+    }
+    window.addEventListener('scroll', updateBackToTop, { passive: true })
+    backToTopBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }))
+    updateBackToTop()
+  }
+
   // Substitutions & tweaks -------------------------------------------------
   function renderSubstitution() {
     const saved = Lists.getSubstitution(recipeId)
@@ -999,8 +1020,9 @@
     } catch (err) {
       if (err.name === 'AbortError') return
       console.error('[cookster] nutrition error:', err)
-      badge.textContent = 'No nutrition estimate available'
+      badge.innerHTML = '<span class="icon" data-icon="alert"></span> No nutrition estimate available'
       badge.classList.add('empty')
+      if (window.CooksterIcons) window.CooksterIcons.initIcons(badge)
     }
   }
 

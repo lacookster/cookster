@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>{{ recipe.title }} | Cookster</title>
     <link rel="icon" type="image/jpeg" href="/static/cookster-logo.jpg">
+    <link rel="preload" as="image" href="/static/cookster-logo.jpg">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="stylesheet" href="/static/style.css">
   </head>
@@ -194,7 +195,7 @@
         <div class="cooking-header-actions">
           <button id="cooking-voice" class="icon-btn" aria-label="Voice commands" title="Voice commands"><span class="icon" data-icon="mic"></span></button>
           <button id="cooking-fullscreen" class="icon-btn" aria-label="Enter fullscreen" title="Enter fullscreen"><span class="icon" data-icon="expand"></span></button>
-          <button id="cooking-close" class="icon-btn" aria-label="Close cooking mode"><span class="icon" data-icon="x"></span></button>
+          <button id="cooking-close" class="icon-btn" aria-label="Close cooking mode" title="Close cooking mode"><span class="icon" data-icon="x"></span></button>
         </div>
       </div>
       <div class="cooking-body">
@@ -211,9 +212,10 @@
       </div>
     </div>
     <div id="lightbox" class="lightbox" aria-hidden="true">
-      <button id="lightbox-close" class="icon-btn" aria-label="Close image"><span class="icon" data-icon="x"></span></button>
+      <button id="lightbox-close" class="icon-btn" aria-label="Close image" title="Close image"><span class="icon" data-icon="x"></span></button>
       <img id="lightbox-img" src="" alt="{{ recipe.title }}">
     </div>
+    <button id="back-to-top" class="back-to-top" aria-label="Back to top" title="Back to top" hidden><span class="icon" data-icon="arrow-up"></span></button>
     <script>
       (() => {
         const saved = localStorage.getItem('theme') || 'light';

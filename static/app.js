@@ -268,7 +268,7 @@
       ${saved.map(s => `
         <span class="saved-search-chip" data-id="${escapeHtml(s.id)}" role="button" tabindex="0">
           <span class="saved-search-text">${escapeHtml(s.label || s.q || s.have)}${s.have ? ' 🥫' : ''}${s.sort && s.sort !== 'relevance' ? ` · ${escapeHtml(s.sort)}` : ''}</span>
-          <button class="saved-search-delete" aria-label="Remove saved search">×</button>
+          <button class="saved-search-delete" aria-label="Remove saved search" title="Remove saved search">×</button>
         </span>
       `).join('')}
     `
@@ -343,12 +343,12 @@
     return text.split('\n').map(l => l.trim()).filter(Boolean)
   }
 
-  function renderNewBookCard(book) {
+  function renderNewBookCard(book, i = 0) {
     const imageHtml = book.image_url
       ? `<div class="card-media"><img src="${book.image_url}" alt="" loading="lazy"></div>`
       : `<div class="card-media"><div class="placeholder"></div></div>`
     return `
-      <a class="card book-card" href="/book?source=${encodeURIComponent(book.source)}">
+      <a class="card book-card" href="/book?source=${encodeURIComponent(book.source)}" style="animation-delay: ${Math.min(i * 40, 400)}ms">
         ${imageHtml}
         <div class="card-body">
           <div class="card-title-row">
@@ -434,16 +434,16 @@
       const data = await res.json()
       const books = data.books || []
       if (books.length === 0) {
-        homeHtml = `
-          <div class="empty empty-home">
-            <h2>👋 Welcome to your cookbooks</h2>
-            <p>Your newest cookbooks will appear here. Start typing to search for recipes, ingredients, or methods. Try a popular ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>, or use the filters above for dietary shortcuts.</p>
-            <div class="empty-actions">
+        homeHtml = renderEmptyState({
+          icon: 'books',
+          className: 'empty-home',
+          title: 'Welcome to your cookbooks',
+          body: '<p>Your newest cookbooks will appear here. Start typing to search for recipes, ingredients, or methods. Try a popular ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>, or use the filters above for dietary shortcuts.</p>',
+          actionsHtml: `
               <button class="empty-example" data-q="chicken">🍗 Chicken</button>
               <button class="empty-example" data-q="chocolate cake">🍰 Chocolate cake</button>
-              <button class="empty-example" data-q="quick">⏱ Quick</button>
-            </div>
-          </div>`
+              <button class="empty-example" data-q="quick">⏱ Quick</button>`
+        })
       } else {
         homeHtml = `
           <div class="new-books-home">
@@ -454,18 +454,19 @@
     } catch (err) {
       if (err.name === 'AbortError') return
       console.error('[cookster] new books error:', err)
-      homeHtml = `
-        <div class="empty empty-home">
-          <h2>👋 Welcome to your cookbooks</h2>
-          <p>Start typing to search for recipes, ingredients, or methods. Try a popular ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>.</p>
-          <div class="empty-actions">
+      homeHtml = renderEmptyState({
+        icon: 'books',
+        className: 'empty-home',
+        title: 'Welcome to your cookbooks',
+        body: '<p>Start typing to search for recipes, ingredients, or methods. Try a popular ingredient like <strong>chicken</strong>, <strong>chocolate</strong>, or <strong>tofu</strong>.</p>',
+        actionsHtml: `
             <button class="empty-example" data-q="chicken">🍗 Chicken</button>
             <button class="empty-example" data-q="pasta">🍝 Pasta</button>
-            <button class="empty-example" data-q="dessert">🍰 Dessert</button>
-          </div>
-        </div>`
+            <button class="empty-example" data-q="dessert">🍰 Dessert</button>`
+      })
     }
     resultsEl.innerHTML = homeHtml + '<div id="recently-viewed-home" class="recently-viewed-home" style="display:none"></div>'
+    initResultIcons()
     resultsEl.querySelectorAll('.empty-example').forEach(btn => {
       btn.addEventListener('click', () => {
         qInput.value = btn.dataset.q
@@ -477,11 +478,12 @@
     setBusy(false)
   }
 
-  function renderCard(r) {
+  function renderCard(r, i = 0) {
     const sid = r.stable_id || String(r.id)
     const isFav = Lists.isFavorite(sid)
     const isWantToTry = Lists.isWantToTry(sid)
     const inLists = Lists.listsForRecipe(sid)
+    const delay = Math.min(i * 40, 400)
     const imageHtml = r.image_url
       ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
       : `<div class="card-media"><div class="placeholder">No image</div></div>`
@@ -491,7 +493,7 @@
       : ''
 
     return `
-      <article class="card" data-recipe-id="${sid}">
+      <article class="card" data-recipe-id="${sid}" style="animation-delay: ${delay}ms">
         ${imageHtml}
         <div class="card-body">
           <div class="card-title-row">
@@ -527,6 +529,21 @@
         </div>
       </article>
     `
+  }
+
+  function renderEmptyState({ icon = 'search', title = '', body = '', actionsHtml = '', className = '' }) {
+    return `
+      <div class="empty empty-state ${className}">
+        <span class="icon empty-state-icon" data-icon="${icon}" aria-hidden="true"></span>
+        <h2>${title}</h2>
+        ${body}
+        ${actionsHtml ? `<div class="empty-actions">${actionsHtml}</div>` : ''}
+      </div>
+    `
+  }
+
+  function initResultIcons() {
+    if (window.CooksterIcons) window.CooksterIcons.initIcons(resultsEl)
   }
 
   function renderSkeletonCards(count = 6) {
@@ -729,19 +746,21 @@
             }
           } catch (e) {}
         }
-        resultsEl.innerHTML = `
-          <div class="empty empty-search">
-            <h2>😕 No recipes found${q ? ` for “${escapeHtml(q)}”` : ''}${escapeHtml(activeFilterText)}${escapeHtml(haveText)}</h2>
+        resultsEl.innerHTML = renderEmptyState({
+          icon: 'search',
+          className: 'empty-search',
+          title: `No recipes found${q ? ` for “${escapeHtml(q)}”` : ''}${escapeHtml(activeFilterText)}${escapeHtml(haveText)}`,
+          body: `
             <p>We couldn't find a match. Try one of these popular searches, remove a filter, or check your spelling.</p>
-            ${suggestionHtml}
-            <div class="empty-actions">
-              <button class="empty-example" data-q="chocolate">🍫 Chocolate</button>
-              <button class="empty-example" data-q="chicken">🍗 Chicken</button>
-              <button class="empty-example" data-q="vegetarian">🥬 Vegetarian</button>
-              <button class="empty-example" data-q="quick dinner">⏱ Quick dinner</button>
-            </div>
-            <button id="empty-random" class="btn secondary">🎲 Surprise me</button>
-          </div>`
+            ${suggestionHtml}`,
+          actionsHtml: `
+            <button class="empty-example" data-q="chocolate">🍫 Chocolate</button>
+            <button class="empty-example" data-q="chicken">🍗 Chicken</button>
+            <button class="empty-example" data-q="vegetarian">🥬 Vegetarian</button>
+            <button class="empty-example" data-q="quick dinner">⏱ Quick dinner</button>
+            <button id="empty-random" class="btn secondary"><span class="icon" data-icon="dice"></span> Surprise me</button>`
+        })
+        initResultIcons()
         const suggestionLink = resultsEl.querySelector('#suggestion-link')
         if (suggestionLink) {
           suggestionLink.addEventListener('click', () => {
@@ -766,7 +785,7 @@
       }
 
       resultsEl.innerHTML = data.results.map(renderCard).join('')
-      if (window.CooksterIcons) window.CooksterIcons.initIcons(resultsEl)
+      initResultIcons()
       syncUrl(pushHistory)
       if (q) saveRecentSearch(q, filtersQuery(), sort)
       updateSaveSearchButton()
@@ -774,11 +793,12 @@
     } catch (err) {
       if (err.name === 'AbortError') return
       console.error('[cookster] search error:', err)
-      resultsEl.innerHTML = `
-        <div class="empty">
-          <h2>🙈 Something went wrong</h2>
-          <p>${err.message}. Try refreshing the page or search again in a moment.</p>
-        </div>`
+      resultsEl.innerHTML = renderEmptyState({
+        icon: 'alert',
+        title: 'Something went wrong',
+        body: `<p>${escapeHtml(err.message)}. Try refreshing the page or search again in a moment.</p>`
+      })
+      initResultIcons()
       updatePager()
     } finally {
       setBusy(false)
@@ -810,12 +830,14 @@
 
     resultsEl.innerHTML = ''
     if (ids.length === 0) {
-      resultsEl.innerHTML = `
-        <div class="empty empty-list">
-          <h2>📂 ${escapeHtml(title)} is empty</h2>
-          <p>Save recipes you love by tapping the heart ❤️ or “Want to try” 🍽 button on any recipe card.</p>
-          <button id="empty-browse" class="btn secondary">🔎 Browse recipes</button>
-        </div>`
+      resultsEl.innerHTML = renderEmptyState({
+        icon: 'list',
+        className: 'empty-list',
+        title: `${escapeHtml(title)} is empty`,
+        body: '<p>Save recipes you love by tapping the heart ❤️ or “Want to try” 🍽 button on any recipe card.</p>',
+        actionsHtml: `<button id="empty-browse" class="btn secondary"><span class="icon" data-icon="search"></span> Browse recipes</button>`
+      })
+      initResultIcons()
       const emptyBrowse = resultsEl.querySelector('#empty-browse')
       if (emptyBrowse) {
         emptyBrowse.addEventListener('click', () => {
@@ -847,7 +869,7 @@
         </div>
         <div class="list-view-results">${ordered.map(renderCard).join('')}</div>
       `
-      if (window.CooksterIcons) window.CooksterIcons.initIcons(resultsEl)
+      initResultIcons()
       document.getElementById('back-to-search').addEventListener('click', () => {
         currentView = 'search'
         activeListId = null
@@ -857,7 +879,12 @@
       if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       console.error('[cookster] list error:', err)
-      resultsEl.innerHTML = `<div class="empty"><h2>Error loading list</h2><p>${err.message}</p></div>`
+      resultsEl.innerHTML = renderEmptyState({
+        icon: 'alert',
+        title: 'Error loading list',
+        body: `<p>${escapeHtml(err.message)}</p>`
+      })
+      initResultIcons()
     } finally {
       setBusy(false)
     }
@@ -1016,7 +1043,7 @@
       pantryListEl.innerHTML = items.map(item => `
         <div class="pantry-item">
           <span class="pantry-text">${escapeHtml(item)}</span>
-          <button class="icon-btn pantry-delete" data-item="${escapeHtml(item)}" aria-label="Remove">✕</button>
+          <button class="icon-btn pantry-delete" data-item="${escapeHtml(item)}" aria-label="Remove" title="Remove item">✕</button>
         </div>
       `).join('')
       pantryListEl.querySelectorAll('.pantry-delete').forEach(btn => {
@@ -1084,8 +1111,8 @@
           <span class="list-count">${list.recipes.length}</span>
         </div>
         <div class="list-row-actions">
-          <button class="icon-btn rename-list" title="Rename">✎</button>
-          <button class="icon-btn delete-list" title="Delete">🗑</button>
+          <button class="icon-btn rename-list" title="Rename" aria-label="Rename list">✎</button>
+          <button class="icon-btn delete-list" title="Delete" aria-label="Delete list">🗑</button>
         </div>
       </div>
     `).join('') || '<p class="empty-lists">No custom lists yet.</p>'
@@ -1183,7 +1210,7 @@
       <label class="shopping-item ${item.checked ? 'checked' : ''}">
         <input type="checkbox" data-id="${item.id}" ${item.checked ? 'checked' : ''}>
         <span class="shopping-text">${escapeHtml(item.text)}${item.source ? ` <span class="shopping-source">(${escapeHtml(item.source)})</span>` : ''}</span>
-        <button class="shopping-delete" data-id="${item.id}" aria-label="Remove">✕</button>
+        <button class="shopping-delete" data-id="${item.id}" aria-label="Remove" title="Remove item">✕</button>
       </label>
     `
   }
@@ -1321,7 +1348,7 @@
           const items = ids.map(id => `
             <div class="meal-item" draggable="true" data-date="${date}" data-id="${id}">
               <a class="meal-title" href="/recipe/${id}" draggable="false">${escapeHtml(titles.get(id) || 'Recipe')}</a>
-              <button class="meal-remove" data-date="${date}" data-id="${id}" aria-label="Remove" draggable="false">✕</button>
+              <button class="meal-remove" data-date="${date}" data-id="${id}" aria-label="Remove" title="Remove meal" draggable="false">✕</button>
             </div>
           `).join('')
           return `

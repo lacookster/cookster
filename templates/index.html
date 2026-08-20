@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Cookster</title>
     <link rel="icon" type="image/jpeg" href="/static/cookster-logo.jpg">
+    <link rel="preload" as="image" href="/static/cookster-logo.jpg">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="stylesheet" href="/static/style.css">
   </head>
@@ -39,7 +40,7 @@
         <div class="search-box">
           <span class="search-icon" aria-hidden="true"><span class="icon" data-icon="search"></span></span>
           <input id="q" placeholder="Search recipes, ingredients, or methods…" autocomplete="off" autofocus />
-          <button id="voice-search" class="voice-search-btn" type="button" aria-label="Search by voice"><span class="icon" data-icon="mic"></span></button>
+          <button id="voice-search" class="voice-search-btn" type="button" aria-label="Search by voice" title="Search by voice"><span class="icon" data-icon="mic"></span></button>
           <div id="suggestions" class="suggestions" role="listbox" aria-hidden="true"></div>
           <div id="recent-searches" class="recent-searches" role="listbox" aria-hidden="true"></div>
           <button id="go"><span class="icon" data-icon="search"></span> Search</button>
@@ -58,27 +59,30 @@
         </div>
       </div>
 
-      <div class="search-actions">
-        <div class="search-filters">
-          <select id="source" aria-label="Filter by book">
-            <option value="">All books</option>
-          </select>
+      <details class="advanced-search">
+        <summary><span class="icon" data-icon="filter"></span> Advanced search</summary>
+        <div class="search-actions">
+          <div class="search-filters">
+            <select id="source" aria-label="Filter by book">
+              <option value="">All books</option>
+            </select>
+          </div>
+          <div class="search-sort">
+            <select id="sort" aria-label="Sort results">
+              <option value="relevance">Relevance</option>
+              <option value="az">A–Z</option>
+              <option value="recent">Recently added</option>
+              <option value="random">Random</option>
+            </select>
+          </div>
+          <button id="save-search" class="btn secondary save-search-btn" title="Save this search" disabled><span class="icon" data-icon="save"></span> Save</button>
+          <a href="/books" class="btn secondary browse-books-btn"><span class="icon" data-icon="books"></span> Browse books</a>
+          <button id="random" class="btn secondary surprise-btn"><span class="icon" data-icon="dice"></span> Surprise me</button>
+          <div class="stats-badge" title="Indexed cookbooks">
+            <span id="book-count-inline">0</span> books
+          </div>
         </div>
-        <div class="search-sort">
-          <select id="sort" aria-label="Sort results">
-            <option value="relevance">Relevance</option>
-            <option value="az">A–Z</option>
-            <option value="recent">Recently added</option>
-            <option value="random">Random</option>
-          </select>
-        </div>
-        <button id="save-search" class="btn secondary save-search-btn" title="Save this search" disabled><span class="icon" data-icon="save"></span> Save</button>
-        <a href="/books" class="btn secondary browse-books-btn"><span class="icon" data-icon="books"></span> Browse books</a>
-        <button id="random" class="btn secondary surprise-btn"><span class="icon" data-icon="dice"></span> Surprise me</button>
-        <div class="stats-badge" title="Indexed cookbooks">
-          <span id="book-count-inline">0</span> books
-        </div>
-      </div>
+      </details>
 
       <div id="saved-searches" class="saved-searches" aria-label="Saved searches"></div>
 
@@ -121,7 +125,7 @@
     <aside id="lists-panel" class="lists-panel" aria-hidden="true">
       <div class="lists-panel-header">
         <h2>My Cookster</h2>
-        <button id="lists-close" class="icon-btn" aria-label="Close"><span class="icon" data-icon="x"></span></button>
+        <button id="lists-close" class="icon-btn" aria-label="Close" title="Close"><span class="icon" data-icon="x"></span></button>
       </div>
       <nav class="lists-tabs" role="tablist">
         <button class="lists-tab active" data-tab="lists" role="tab" aria-selected="true"><span class="icon" data-icon="list"></span> Lists</button>
