@@ -19,9 +19,9 @@
           </div>
         </a>
         <div class="header-actions">
-          <button id="lists-toggle" class="theme-toggle" aria-label="My lists">📝 My Lists</button>
-          <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
-          <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
+          <button id="lists-toggle" class="theme-toggle" aria-label="My lists"><span class="icon" data-icon="list"></span> My Lists</button>
+          <button id="theme" class="theme-toggle" aria-label="Toggle theme"><span class="icon" data-icon="moon"></span> Dark</button>
+          <a href="/logout" class="theme-toggle" aria-label="Log out"><span class="icon" data-icon="log-out"></span> Log out</a>
         </div>
       </header>
 
@@ -41,7 +41,7 @@
         <form class="book-search" action="/" method="GET">
           <input type="hidden" name="source" value="{{ source_raw }}" />
           <div class="search-box">
-            <span class="search-icon" aria-hidden="true">🔎</span>
+            <span class="search-icon" aria-hidden="true"><span class="icon" data-icon="search"></span></span>
             <input name="q" placeholder="Search within this book…" autocomplete="off" />
             <button type="submit">Search</button>
           </div>
@@ -59,16 +59,16 @@
     <aside id="lists-panel" class="lists-panel" aria-hidden="true">
       <div class="lists-panel-header">
         <h2>My Lists</h2>
-        <button id="lists-close" class="icon-btn" aria-label="Close">✕</button>
+        <button id="lists-close" class="icon-btn" aria-label="Close"><span class="icon" data-icon="x"></span></button>
       </div>
       <div class="lists-panel-body">
         <section class="list-section">
           <div class="list-row favorite-row" data-list-id="__favorites__">
-            <span class="list-name">❤️ Favourites</span>
+            <span class="list-name"><span class="icon" data-icon="heart"></span> Favourites</span>
             <span class="list-count" id="fav-count">0</span>
           </div>
           <div class="list-row want-row" data-list-id="__want_to_try__">
-            <span class="list-name">🍽 Want to try</span>
+            <span class="list-name"><span class="icon" data-icon="utensils"></span> Want to try</span>
             <span class="list-count" id="want-count">0</span>
           </div>
         </section>
@@ -86,6 +86,7 @@
 
     <script src="/static/lists.js" defer></script>
     <script src="/static/ui.js" defer></script>
+    <script src="/static/icons.js" defer></script>
     <script>
       document.addEventListener('DOMContentLoaded', () => {
         (() => {
@@ -107,7 +108,7 @@
             return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
           }
 
-          function heartIcon(filled) { return filled ? '♥' : '♡' }
+          function heartIcon(filled) { return '<span class="icon" data-icon="heart"></span>' }
 
           function renderCard(r) {
             const sid = r.stable_id || String(r.id)
@@ -115,7 +116,7 @@
             const isWant = Lists.isWantToTry(sid)
             const imageHtml = r.image_url
               ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
-              : `<div class="card-media"><div class="placeholder">📷 No image</div></div>`
+              : `<div class="card-media"><div class="placeholder">No image</div></div>`
             return `
               <article class="card">
                 ${imageHtml}
@@ -123,7 +124,7 @@
                   <div class="card-title-row">
                     <h3><a href="/recipe/${sid}?db=${encodeURIComponent(db)}">${r.title}</a></h3>
                     <div class="card-title-actions">
-                      <button class="want-btn ${isWant ? 'active' : ''}" data-id="${sid}" aria-label="${isWant ? 'Remove from Want to try' : 'Add to Want to try'}" title="${isWant ? 'Remove from Want to try' : 'Add to Want to try'}">🍽</button>
+                      <button class="want-btn ${isWant ? 'active' : ''}" data-id="${sid}" aria-label="${isWant ? 'Remove from Want to try' : 'Add to Want to try'}" title="${isWant ? 'Remove from Want to try' : 'Add to Want to try'}"><span class="icon" data-icon="utensils"></span></button>
                       <button class="fav-btn ${isFav ? 'active' : ''}" data-id="${sid}" aria-label="${isFav ? 'Remove from favourites' : 'Add to favourites'}">${heartIcon(isFav)}</button>
                     </div>
                   </div>
@@ -140,6 +141,7 @@
               total = data.total || 0
               subtitleEl.textContent = `${total} recipe${total === 1 ? '' : 's'} in this book`
               resultsEl.innerHTML = data.results.length ? data.results.map(renderCard).join('') : '<div class="empty"><h2>No recipes</h2></div>'
+              if (window.CooksterIcons) window.CooksterIcons.initIcons(resultsEl)
               controls.style.display = total > limit ? '' : 'none'
               const tp = Math.max(1, Math.ceil(total / limit))
               pageEl.textContent = page
@@ -150,7 +152,8 @@
                 btn.addEventListener('click', () => {
                   const nowFav = Lists.toggleFavorite(btn.dataset.id)
                   btn.classList.toggle('active', nowFav)
-                  btn.textContent = heartIcon(nowFav)
+                  btn.innerHTML = heartIcon(nowFav)
+                  if (window.CooksterIcons) window.CooksterIcons.initIcons(btn)
                 })
               })
               resultsEl.querySelectorAll('.want-btn').forEach(btn => {

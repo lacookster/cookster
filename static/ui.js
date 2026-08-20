@@ -9,7 +9,10 @@
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme)
     document.querySelectorAll('#theme').forEach(btn => {
-      btn.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark'
+      btn.innerHTML = theme === 'dark'
+        ? '<span class="icon" data-icon="sun"></span> Light'
+        : '<span class="icon" data-icon="moon"></span> Dark'
+      if (root.CooksterIcons) root.CooksterIcons.initIcons(btn)
     })
   }
 
@@ -36,6 +39,15 @@
     const listsToggle = document.getElementById('lists-toggle')
     const listsClose = document.getElementById('lists-close')
     if (!listsPanel) return
+
+    // Shadow under the sticky header once the panel body scrolls.
+    const listsBody = listsPanel.querySelector('.lists-panel-body')
+    const listsHeader = listsPanel.querySelector('.lists-panel-header')
+    if (listsBody && listsHeader) {
+      listsBody.addEventListener('scroll', () => {
+        listsHeader.classList.toggle('scrolled', listsBody.scrollTop > 4)
+      })
+    }
 
     // index.html loads app.js which already binds the lists panel toggles.
     if (hasAppJs()) return
@@ -67,10 +79,12 @@
   function init() {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => {
+        if (root.CooksterIcons) root.CooksterIcons.initIcons()
         initTheme()
         initListsPanel()
       })
     } else {
+      if (root.CooksterIcons) root.CooksterIcons.initIcons()
       initTheme()
       initListsPanel()
     }

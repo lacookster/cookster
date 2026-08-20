@@ -19,9 +19,9 @@
           </div>
         </a>
         <div class="header-actions">
-          <button id="lists-toggle" class="theme-toggle" aria-label="My lists">📝 My Lists</button>
-          <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
-          <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
+          <button id="lists-toggle" class="theme-toggle" aria-label="My lists"><span class="icon" data-icon="list"></span> My Lists</button>
+          <button id="theme" class="theme-toggle" aria-label="Toggle theme"><span class="icon" data-icon="moon"></span> Dark</button>
+          <a href="/logout" class="theme-toggle" aria-label="Log out"><span class="icon" data-icon="log-out"></span> Log out</a>
         </div>
       </header>
 
@@ -49,7 +49,7 @@
                     {% if book.image_url %}
                       <img src="{{ book.image_url }}" alt="" loading="lazy">
                     {% else %}
-                      <div class="placeholder">📚</div>
+                      <div class="placeholder"></div>
                     {% endif %}
                   </div>
                   <div class="card-body">
@@ -75,7 +75,7 @@
                 {% if book.image_url %}
                   <img src="{{ book.image_url }}" alt="" loading="lazy">
                 {% else %}
-                  <div class="placeholder">📚</div>
+                  <div class="placeholder"></div>
                 {% endif %}
               </div>
               <div class="card-body">
@@ -95,12 +95,12 @@
     <aside id="lists-panel" class="lists-panel" aria-hidden="true">
       <div class="lists-panel-header">
         <h2>My Lists</h2>
-        <button id="lists-close" class="icon-btn" aria-label="Close">✕</button>
+        <button id="lists-close" class="icon-btn" aria-label="Close"><span class="icon" data-icon="x"></span></button>
       </div>
       <div class="lists-panel-body">
         <section class="list-section">
           <div class="list-row favorite-row" data-list-id="__favorites__">
-            <span class="list-name">❤️ Favourites</span>
+            <span class="list-name"><span class="icon" data-icon="heart"></span> Favourites</span>
             <span class="list-count" id="fav-count">0</span>
           </div>
         </section>
@@ -118,5 +118,6 @@
 
     <script src="/static/lists.js" defer></script>
     <script src="/static/ui.js" defer></script>
+    <script src="/static/icons.js" defer></script>
   </body>
 </html>

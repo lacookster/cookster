@@ -19,8 +19,8 @@
           </div>
         </a>
         <div class="header-actions">
-          <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
-          <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
+          <button id="theme" class="theme-toggle" aria-label="Toggle theme"><span class="icon" data-icon="moon"></span> Dark</button>
+          <a href="/logout" class="theme-toggle" aria-label="Log out"><span class="icon" data-icon="log-out"></span> Log out</a>
         </div>
       </header>
 
@@ -38,7 +38,6 @@
               <img src="{{ image_url }}" alt="{{ recipe.title }}">
             {% else %}
               <div class="no-image">
-                <img src="/static/cookster-logo.jpg" alt="" class="watermark-logo">
                 <span>No image available</span>
               </div>
             {% endif %}
@@ -51,19 +50,19 @@
             <div id="recipe-rating-display" class="recipe-rating-display"></div>
             {% if serves %}<div class="recipe-serves">🍽 {{ serves }} <span id="nutrition-badge" class="nutrition-badge" data-recipe-id="{{ recipe.stable_id }}" data-db="{{ request.query_params.get('db', 'cookster.db')|urlencode }}">Loading…</span></div>{% endif %}
             <div class="recipe-actions-row">
-              <button id="recipe-want" class="want-btn" data-id="{{ recipe.stable_id }}" aria-label="Add to Want to try" title="Add to Want to try">🍽</button>
-              <button id="recipe-fav" class="fav-btn" data-id="{{ recipe.stable_id }}" aria-label="Add to favourites">♡</button>
+              <button id="recipe-want" class="want-btn" data-id="{{ recipe.stable_id }}" aria-label="Add to Want to try" title="Add to Want to try"><span class="icon" data-icon="utensils"></span></button>
+              <button id="recipe-fav" class="fav-btn" data-id="{{ recipe.stable_id }}" aria-label="Add to favourites"><span class="icon" data-icon="heart"></span></button>
               <div class="list-dropdown">
-                <button id="list-toggle" class="btn secondary">📝 Add to list</button>
+                <button id="list-toggle" class="btn secondary"><span class="icon" data-icon="list"></span> Add to list</button>
                 <div id="list-menu" class="list-menu">
                   <div id="list-menu-items"></div>
                   <div class="list-menu-divider"></div>
                   <button id="new-list-from-recipe" class="list-menu-new">+ Create new list</button>
                 </div>
               </div>
-              <button id="copy-link" class="btn secondary">🔗 Copy link</button>
-              <button id="share-recipe" class="btn secondary">📤 Share</button>
-              <button id="export-markdown" class="btn secondary">📝 Export Markdown</button>
+              <button id="copy-link" class="btn secondary"><span class="icon" data-icon="copy"></span> Copy link</button>
+              <button id="share-recipe" class="btn secondary"><span class="icon" data-icon="share"></span> Share</button>
+              <button id="export-markdown" class="btn secondary"><span class="icon" data-icon="download"></span> Export Markdown</button>
             </div>
           </div>
         </div>
@@ -116,8 +115,8 @@
             </div>
 
             <div class="actions">
-              <a class="btn" href="/download/{{ recipe.stable_id }}">⬇ Download Recipe</a>
-              <button id="start-cooking" class="btn">👨‍🍳 Cooking mode</button>
+              <a class="btn" href="/download/{{ recipe.stable_id }}"><span class="icon" data-icon="download"></span> Download Recipe</a>
+              <button id="start-cooking" class="btn"><span class="icon" data-icon="chef"></span> Cooking mode</button>
               <a class="btn secondary" href="/">← Back</a>
             </div>
           </div>
@@ -127,10 +126,10 @@
           <div class="panel extras-panel">
             <h2>Plan &amp; remember</h2>
             <div class="extras-row">
-              <button id="add-ingredients-shopping" class="btn">🛒 Add ingredients to shopping list</button>
+              <button id="add-ingredients-shopping" class="btn"><span class="icon" data-icon="shopping-cart"></span> Add ingredients to shopping list</button>
               <div class="meal-plan-inline">
                 <input type="date" id="recipe-plan-date" aria-label="Plan meal date">
-                <button id="add-to-meal-plan" class="btn secondary">📅 Plan</button>
+                <button id="add-to-meal-plan" class="btn secondary"><span class="icon" data-icon="calendar"></span> Plan</button>
               </div>
             </div>
             <div class="extras-row">
@@ -138,7 +137,7 @@
                 <span class="rating-label">Rating:</span>
                 <span id="recipe-rating" class="rating-stars"></span>
               </div>
-              <button id="mark-cooked" class="btn secondary">👨‍🍳 I cooked this</button>
+              <button id="mark-cooked" class="btn secondary"><span class="icon" data-icon="chef"></span> I cooked this</button>
             </div>
             <div id="cooked-date" class="cooked-date"></div>
             <div class="notes-widget">
@@ -170,7 +169,7 @@
               <button id="save-video" class="btn">Save</button>
             </div>
             <div id="video-actions" class="video-actions" style="display:none">
-              <a id="watch-video" class="video-link" href="#" target="_blank" rel="noopener">▶ Watch video</a>
+              <a id="watch-video" class="video-link" href="#" target="_blank" rel="noopener"><span class="icon" data-icon="play"></span> Watch video</a>
               <button id="remove-video" class="btn danger">Remove</button>
             </div>
           </div>
@@ -193,9 +192,9 @@
       <div class="cooking-header">
         <div class="cooking-progress"><span id="cooking-step-num">1</span> / <span id="cooking-step-total">1</span></div>
         <div class="cooking-header-actions">
-          <button id="cooking-voice" class="icon-btn" aria-label="Voice commands" title="Voice commands">🎤</button>
-          <button id="cooking-fullscreen" class="icon-btn" aria-label="Enter fullscreen" title="Enter fullscreen">⛶</button>
-          <button id="cooking-close" class="icon-btn" aria-label="Close cooking mode">✕</button>
+          <button id="cooking-voice" class="icon-btn" aria-label="Voice commands" title="Voice commands"><span class="icon" data-icon="mic"></span></button>
+          <button id="cooking-fullscreen" class="icon-btn" aria-label="Enter fullscreen" title="Enter fullscreen"><span class="icon" data-icon="expand"></span></button>
+          <button id="cooking-close" class="icon-btn" aria-label="Close cooking mode"><span class="icon" data-icon="x"></span></button>
         </div>
       </div>
       <div class="cooking-body">
@@ -212,7 +211,7 @@
       </div>
     </div>
     <div id="lightbox" class="lightbox" aria-hidden="true">
-      <button id="lightbox-close" class="icon-btn" aria-label="Close image">✕</button>
+      <button id="lightbox-close" class="icon-btn" aria-label="Close image"><span class="icon" data-icon="x"></span></button>
       <img id="lightbox-img" src="" alt="{{ recipe.title }}">
     </div>
     <script>
@@ -223,6 +222,7 @@
     </script>
     <script src="/static/lists.js" defer></script>
     <script src="/static/ui.js" defer></script>
+    <script src="/static/icons.js" defer></script>
     <script src="/static/recipe.js" defer></script>
   </body>
 </html>

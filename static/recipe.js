@@ -40,7 +40,8 @@
   function updateFav() {
     const isFav = Lists.isFavorite(recipeId)
     favBtn.classList.toggle('active', isFav)
-    favBtn.textContent = isFav ? '♥' : '♡'
+    favBtn.innerHTML = '<span class="icon" data-icon="heart"></span>'
+    if (window.CooksterIcons) window.CooksterIcons.initIcons(favBtn)
     favBtn.setAttribute('aria-label', isFav ? 'Remove from favourites' : 'Add to favourites')
   }
 
@@ -219,7 +220,7 @@
   function renderRelatedCard(r) {
     const imageHtml = r.image_url
       ? `<div class="related-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
-      : `<div class="related-media placeholder">📷</div>`
+      : `<div class="related-media placeholder"></div>`
     return `
       <a class="related-card" href="/recipe/${r.stable_id}">
         ${imageHtml}
@@ -632,7 +633,8 @@
   function updateFullscreenIcon() {
     if (!cookingFullscreen) return
     const isFullscreen = !!document.fullscreenElement
-    cookingFullscreen.textContent = isFullscreen ? '⛶' : '⛶'
+    cookingFullscreen.innerHTML = '<span class="icon" data-icon="expand"></span>'
+    if (window.CooksterIcons) window.CooksterIcons.initIcons(cookingFullscreen)
     cookingFullscreen.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen')
     cookingFullscreen.setAttribute('title', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen')
     cookingFullscreen.classList.toggle('fullscreen-active', isFullscreen)

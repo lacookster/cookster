@@ -19,11 +19,11 @@
           </div>
         </a>
         <div class="header-actions">
-          <button id="install-btn" class="theme-toggle install-btn" aria-label="Install Cookster" hidden>📲 Install</button>
-          <a href="/collections" class="theme-toggle" aria-label="Collections">📚 Collections</a>
-          <button id="lists-toggle" class="theme-toggle" aria-label="My lists">📝 My Lists</button>
-          <button id="theme" class="theme-toggle" aria-label="Toggle theme">🌙 Dark</button>
-          <a href="/logout" class="theme-toggle" aria-label="Log out">🚪 Log out</a>
+          <button id="install-btn" class="theme-toggle install-btn" aria-label="Install Cookster" hidden><span class="icon" data-icon="download"></span> Install</button>
+          <a href="/collections" class="theme-toggle" aria-label="Collections"><span class="icon" data-icon="books"></span> Collections</a>
+          <button id="lists-toggle" class="theme-toggle" aria-label="My lists"><span class="icon" data-icon="list"></span> My Lists</button>
+          <button id="theme" class="theme-toggle" aria-label="Toggle theme"><span class="icon" data-icon="moon"></span> Dark</button>
+          <a href="/logout" class="theme-toggle" aria-label="Log out"><span class="icon" data-icon="log-out"></span> Log out</a>
         </div>
       </header>
 
@@ -37,17 +37,17 @@
 
       <div class="search-row">
         <div class="search-box">
-          <span class="search-icon" aria-hidden="true">🔎</span>
+          <span class="search-icon" aria-hidden="true"><span class="icon" data-icon="search"></span></span>
           <input id="q" placeholder="Search recipes, ingredients, or methods…" autocomplete="off" autofocus />
-          <button id="voice-search" class="voice-search-btn" type="button" aria-label="Search by voice">🎤</button>
+          <button id="voice-search" class="voice-search-btn" type="button" aria-label="Search by voice"><span class="icon" data-icon="mic"></span></button>
           <div id="suggestions" class="suggestions" role="listbox" aria-hidden="true"></div>
           <div id="recent-searches" class="recent-searches" role="listbox" aria-hidden="true"></div>
-          <button id="go">Search</button>
+          <button id="go"><span class="icon" data-icon="search"></span> Search</button>
         </div>
       </div>
 
       <div class="search-options">
-        <button id="what-i-have-toggle" class="btn secondary what-i-have-toggle" type="button" aria-pressed="false" title="Find recipes using ingredients you already have">🥫 Use what I have</button>
+        <button id="what-i-have-toggle" class="btn secondary what-i-have-toggle" type="button" aria-pressed="false" title="Find recipes using ingredients you already have"><span class="icon" data-icon="pantry"></span> Use what I have</button>
         <div class="search-box exclude-box">
           <span class="search-icon" aria-hidden="true">🚫</span>
           <input id="exclude" placeholder="Exclude: mushrooms, coriander…" autocomplete="off" aria-label="Excluded ingredients" />
@@ -72,9 +72,9 @@
             <option value="random">Random</option>
           </select>
         </div>
-        <button id="save-search" class="btn secondary save-search-btn" title="Save this search" disabled>💾 Save</button>
-        <a href="/books" class="btn secondary browse-books-btn">📚 Browse books</a>
-        <button id="random" class="btn secondary surprise-btn">🎲 Surprise me</button>
+        <button id="save-search" class="btn secondary save-search-btn" title="Save this search" disabled><span class="icon" data-icon="save"></span> Save</button>
+        <a href="/books" class="btn secondary browse-books-btn"><span class="icon" data-icon="books"></span> Browse books</a>
+        <button id="random" class="btn secondary surprise-btn"><span class="icon" data-icon="dice"></span> Surprise me</button>
         <div class="stats-badge" title="Indexed cookbooks">
           <span id="book-count-inline">0</span> books
         </div>
@@ -121,25 +121,25 @@
     <aside id="lists-panel" class="lists-panel" aria-hidden="true">
       <div class="lists-panel-header">
         <h2>My Cookster</h2>
-        <button id="lists-close" class="icon-btn" aria-label="Close">✕</button>
+        <button id="lists-close" class="icon-btn" aria-label="Close"><span class="icon" data-icon="x"></span></button>
       </div>
       <nav class="lists-tabs" role="tablist">
-        <button class="lists-tab active" data-tab="lists" role="tab" aria-selected="true">Lists</button>
-        <button class="lists-tab" data-tab="stats" role="tab" aria-selected="false">📊 Stats</button>
-        <button class="lists-tab" data-tab="pantry" role="tab" aria-selected="false">🥫 Pantry</button>
-        <button class="lists-tab" data-tab="shopping" role="tab" aria-selected="false">Shopping</button>
-        <button class="lists-tab" data-tab="mealplan" role="tab" aria-selected="false">Meal Plan</button>
-        <button class="lists-tab" data-tab="backup" role="tab" aria-selected="false">Backup</button>
+        <button class="lists-tab active" data-tab="lists" role="tab" aria-selected="true"><span class="icon" data-icon="list"></span> Lists</button>
+        <button class="lists-tab" data-tab="stats" role="tab" aria-selected="false"><span class="icon" data-icon="chart"></span> Stats</button>
+        <button class="lists-tab" data-tab="pantry" role="tab" aria-selected="false"><span class="icon" data-icon="pantry"></span> Pantry</button>
+        <button class="lists-tab" data-tab="shopping" role="tab" aria-selected="false"><span class="icon" data-icon="shopping-cart"></span> Shopping</button>
+        <button class="lists-tab" data-tab="mealplan" role="tab" aria-selected="false"><span class="icon" data-icon="calendar"></span> Meal Plan</button>
+        <button class="lists-tab" data-tab="backup" role="tab" aria-selected="false"><span class="icon" data-icon="backup"></span> Backup</button>
       </nav>
       <div class="lists-panel-body">
         <div class="tab-panel active" data-tab="lists">
           <section class="list-section">
             <div class="list-row favorite-row" data-list-id="__favorites__">
-              <span class="list-name">❤️ Favourites</span>
+              <span class="list-name"><span class="icon" data-icon="heart"></span> Favourites</span>
               <span class="list-count" id="fav-count">0</span>
             </div>
             <div class="list-row want-row" data-list-id="__want_to_try__">
-              <span class="list-name">🍽 Want to try</span>
+              <span class="list-name"><span class="icon" data-icon="utensils"></span> Want to try</span>
               <span class="list-count" id="want-count">0</span>
             </div>
           </section>
@@ -155,7 +155,7 @@
 
         <div class="tab-panel" data-tab="stats">
           <section class="list-section">
-            <h3>📊 Cooking stats</h3>
+            <h3><span class="icon" data-icon="chart"></span> Cooking stats</h3>
             <div class="stats-grid">
               <div class="stats-card">
                 <span class="stats-number" id="stats-fav-count">0</span>
@@ -269,12 +269,12 @@
     <div id="lists-backdrop" class="lists-backdrop"></div>
 
     <nav class="mobile-nav" aria-label="Mobile navigation">
-      <a href="/" class="mobile-nav-item" data-action="search">🔎 Search</a>
-      <a href="/books" class="mobile-nav-item" data-action="books">📚 Books</a>
-      <a href="/collections" class="mobile-nav-item">📚 Collections</a>
-      <button type="button" class="mobile-nav-item" data-action="mealplan">📅 Meal</button>
-      <button type="button" class="mobile-nav-item" data-action="shopping">🛒 Shop</button>
-      <button type="button" class="mobile-nav-item" data-action="lists">📝 Lists</button>
+      <a href="/" class="mobile-nav-item" data-action="search"><span class="icon" data-icon="search"></span> Search</a>
+      <a href="/books" class="mobile-nav-item" data-action="books"><span class="icon" data-icon="books"></span> Books</a>
+      <a href="/collections" class="mobile-nav-item"><span class="icon" data-icon="books"></span> Collections</a>
+      <button type="button" class="mobile-nav-item" data-action="mealplan"><span class="icon" data-icon="calendar"></span> Meal</button>
+      <button type="button" class="mobile-nav-item" data-action="shopping"><span class="icon" data-icon="shopping-cart"></span> Shop</button>
+      <button type="button" class="mobile-nav-item" data-action="lists"><span class="icon" data-icon="list"></span> Lists</button>
     </nav>
 
     <div id="onboarding-overlay" class="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Cookster" hidden>
@@ -322,6 +322,7 @@
 
     <script src="/static/lists.js" defer></script>
     <script src="/static/ui.js" defer></script>
+    <script src="/static/icons.js" defer></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>

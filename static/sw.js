@@ -1,6 +1,6 @@
 /* Cookster service worker — Phase 7 robust offline support */
 
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 const STATIC_CACHE = `cookster-static-v${CACHE_VERSION}`
 const PAGES_CACHE = `cookster-pages-v${CACHE_VERSION}`
 const IMAGES_CACHE = `cookster-images-v${CACHE_VERSION}`
@@ -12,6 +12,7 @@ const APP_SHELL = [
   '/static/lists.js',
   '/static/recipe.js',
   '/static/ui.js',
+  '/static/icons.js',
   '/static/style.css',
   '/static/cookster-logo.jpg',
   '/static/manifest.json'

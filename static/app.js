@@ -309,7 +309,7 @@
   }
 
   function heartIcon(filled) {
-    return filled ? '♥' : '♡'
+    return '<span class="icon" data-icon="heart"></span>'
   }
 
   function renderRatingStars(rating, size = '1rem') {
@@ -346,7 +346,7 @@
   function renderNewBookCard(book) {
     const imageHtml = book.image_url
       ? `<div class="card-media"><img src="${book.image_url}" alt="" loading="lazy"></div>`
-      : `<div class="card-media"><div class="placeholder">📚</div></div>`
+      : `<div class="card-media"><div class="placeholder"></div></div>`
     return `
       <a class="card book-card" href="/book?source=${encodeURIComponent(book.source)}">
         ${imageHtml}
@@ -365,7 +365,7 @@
   function renderRecentCard(r) {
     const imageHtml = r.image_url
       ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
-      : `<div class="card-media"><div class="placeholder">📷 No image</div></div>`
+      : `<div class="card-media"><div class="placeholder">No image</div></div>`
     return `
       <a class="card recent-card" href="/recipe/${r.stable_id || String(r.id)}">
         ${imageHtml}
@@ -484,7 +484,7 @@
     const inLists = Lists.listsForRecipe(sid)
     const imageHtml = r.image_url
       ? `<div class="card-media"><img src="${r.image_url}" alt="" loading="lazy"></div>`
-      : `<div class="card-media"><div class="placeholder">📷 No image</div></div>`
+      : `<div class="card-media"><div class="placeholder">No image</div></div>`
 
     const listChips = inLists.length
       ? `<div class="card-lists">${inLists.map(l => `<span class="list-chip">${escapeHtml(l.name)}</span>`).join('')}</div>`
@@ -498,7 +498,7 @@
             <h3><a href="/recipe/${sid}">${r.title}</a></h3>
             <div class="card-title-actions">
               <button class="want-btn ${isWantToTry ? 'active' : ''}" data-id="${sid}" title="${isWantToTry ? 'Remove from Want to try' : 'Add to Want to try'}" aria-label="${isWantToTry ? 'Remove from Want to try' : 'Add to Want to try'}">
-                ${isWantToTry ? '🍽' : '🍽'}
+                <span class="icon" data-icon="utensils"></span>
               </button>
               <button class="fav-btn ${isFav ? 'active' : ''}" data-id="${sid}" aria-label="${isFav ? 'Remove from favourites' : 'Add to favourites'}">
                 ${heartIcon(isFav)}
@@ -518,15 +518,29 @@
             ${r.steps_snippet ? `<div style="margin-top:6px"><strong>Method:</strong> ${r.steps_snippet}</div>` : ''}
           </div>
           <div class="card-actions-row">
-            <button class="card-action-btn add-shopping" data-id="${sid}" title="Add ingredients to shopping list">🛒 Shopping</button>
+            <button class="card-action-btn add-shopping" data-id="${sid}" title="Add ingredients to shopping list"><span class="icon" data-icon="shopping-cart"></span> Shopping</button>
             <div class="card-plan">
               <input type="date" class="card-plan-date" data-id="${sid}" aria-label="Plan meal date">
-              <button class="card-action-btn plan-meal" data-id="${sid}" title="Add to meal plan">📅 Plan</button>
+              <button class="card-action-btn plan-meal" data-id="${sid}" title="Add to meal plan"><span class="icon" data-icon="calendar"></span> Plan</button>
             </div>
           </div>
         </div>
       </article>
     `
+  }
+
+  function renderSkeletonCards(count = 6) {
+    const card = `
+      <article class="card skeleton-card" aria-hidden="true">
+        <div class="card-media"></div>
+        <div class="card-body">
+          <div class="card-title-row"><h3>Loading recipe title…</h3></div>
+          <div class="card-meta">Loading details…</div>
+          <div class="card-snippet">Loading ingredients and method snippet…</div>
+        </div>
+      </article>
+    `
+    resultsEl.innerHTML = card.repeat(count)
   }
 
   function closeSuggestions() {
@@ -680,6 +694,7 @@
     }
 
     setBusy(true)
+    renderSkeletonCards()
     if (searchAbortController) searchAbortController.abort()
     searchAbortController = new AbortController()
     try {
@@ -751,6 +766,7 @@
       }
 
       resultsEl.innerHTML = data.results.map(renderCard).join('')
+      if (window.CooksterIcons) window.CooksterIcons.initIcons(resultsEl)
       syncUrl(pushHistory)
       if (q) saveRecentSearch(q, filtersQuery(), sort)
       updateSaveSearchButton()
@@ -831,6 +847,7 @@
         </div>
         <div class="list-view-results">${ordered.map(renderCard).join('')}</div>
       `
+      if (window.CooksterIcons) window.CooksterIcons.initIcons(resultsEl)
       document.getElementById('back-to-search').addEventListener('click', () => {
         currentView = 'search'
         activeListId = null
@@ -856,7 +873,8 @@
       const nowFav = Lists.toggleFavorite(id)
       favBtn.classList.toggle('active', nowFav)
       favBtn.setAttribute('aria-label', nowFav ? 'Remove from favourites' : 'Add to favourites')
-      favBtn.textContent = heartIcon(nowFav)
+      favBtn.innerHTML = heartIcon(nowFav)
+      if (window.CooksterIcons) window.CooksterIcons.initIcons(favBtn)
       return
     }
 
@@ -1770,7 +1788,10 @@
 
   function syncTheme() {
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-    themeBtn.textContent = isDark ? '☀️ Light' : '🌙 Dark'
+    themeBtn.innerHTML = isDark
+      ? '<span class="icon" data-icon="sun"></span> Light'
+      : '<span class="icon" data-icon="moon"></span> Dark'
+    if (window.CooksterIcons) window.CooksterIcons.initIcons(themeBtn)
   }
   themeBtn.addEventListener('click', () => {
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
