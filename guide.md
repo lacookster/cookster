@@ -191,6 +191,20 @@ Endpoints:
 
 You do **not** need to rebuild the database after moving a book into `books/added/`.
 
+### Book title cleaning
+
+`api._clean_source()` converts raw source filenames into display-friendly book titles. It strips:
+
+- Anna's Archive metadata tails (` -- Author -- Place, Year -- isbn13 ...`).
+- `libgen.li` / `libgen` markers.
+- Curly-brace metadata like `{Smith, Delia}{112392336}`.
+- Trailing `(year, publisher)` tags.
+- PDFDrive suffixes.
+- Known book extensions (`.epub`, `.pdf`, `.mobi`, `.azw3`, `.azw`, `.txt`), including double extensions.
+- Mojibake (`�` → `'`, `&amp_` → `&`).
+
+It also normalises underscores used as separators (`Title_ Subtitle` → `Title: Subtitle`). If you add a new source of books with different filename junk, extend `_clean_source()` and add a test in `tests/test_api.py`.
+
 ### Security model
 
 - The `db` query parameter is sandboxed: paths must resolve inside `api.DB_DIR` (project root by default). `..` and absolute paths outside the project are rejected.
