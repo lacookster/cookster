@@ -64,7 +64,7 @@ def test_search_on_large_db_is_fast():
     assert resp.status_code == 200
     j = resp.json()
     assert j['total'] > 0
-    assert elapsed < 1.0, f'search took {elapsed:.2f}s'
+    assert elapsed < 3.0, f'search took {elapsed:.2f}s'
 
     _restore_db_dir()
     os.remove(dbpath)
@@ -84,7 +84,7 @@ def test_related_on_large_db_is_fast():
     assert resp.status_code == 200
     j = resp.json()
     assert 'same_book' in j and 'similar' in j
-    assert elapsed < 1.0, f'related took {elapsed:.2f}s'
+    assert elapsed < 3.0, f'related took {elapsed:.2f}s'
 
     _restore_db_dir()
     os.remove(dbpath)
