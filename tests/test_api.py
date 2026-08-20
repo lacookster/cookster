@@ -39,8 +39,12 @@ def make_db(path, epubs_dir=None):
 
 def test_clean_source():
     assert _clean_source("Gordon Ramsay's Ultimate Cookery Course -- Ramsay, Gordon -- London, 2012 -- Anna’s Archive.epub") == "Gordon Ramsay's Ultimate Cookery Course"
-    assert _clean_source("Afro-Vegan_ Farm-Fresh African ( PDFDrive.com ).pdf") == "Afro-Vegan_ Farm-Fresh African"
+    assert _clean_source("Afro-Vegan_ Farm-Fresh African ( PDFDrive.com ).pdf") == "Afro-Vegan: Farm-Fresh African"
     assert _clean_source("Book.pdf") == "Book"
+    assert _clean_source("Delias Cakes{Smith, Delia}(2014, Hodder &amp_ Stoughton){112392336} libgen.li.epub") == "Delias Cakes"
+    assert _clean_source("Grigson, Jane - Good Things (2008, Grub Street Cookery) - libgen.li.epub") == "Grigson, Jane - Good Things"
+    assert _clean_source("Old World Italian_Recipes and Secrets from our Travels in Italy.epub.epub") == "Old World Italian: Recipes and Secrets from our Travels in Italy"
+    assert _clean_source("The Good Bite\ufffds High Protein Meal Prep.epub") == "The Good Bite's High Protein Meal Prep"
 
 
 def test_search_endpoint():

@@ -563,19 +563,40 @@ def resolve_download_path(file_path: str) -> str:
 def _clean_source(source: str) -> str:
     """Return a display-friendly book title from a filename.
 
-    Strips Anna's Archive metadata tails and PDFDrive suffixes.
+    Strips Anna's Archive/libgen metadata, PDFDrive suffixes, year/publisher
+    tags, double extensions, and common mojibake.
     """
     if not source:
         return ''
-    base = os.path.splitext(source)[0]
+    base = os.path.basename(source)
+    # Remove known book extensions only (handles .epub.epub without eating dots in metadata)
+    book_exts = {'.epub', '.pdf', '.mobi', '.azw3', '.azw', '.txt'}
+    while True:
+        base, ext = os.path.splitext(base)
+        if ext.lower() in book_exts:
+            continue
+        base = base + ext
+        break
+    # Decode common HTML entities and mojibake
+    base = base.replace('&amp_', '&').replace('&amp;', '&')
+    base = base.replace('�', "'")
     # Anna's Archive pattern: "Title -- Author -- Place, Year -- Publisher -- isbn13 ..."
     if ' -- ' in base:
         base = base.split(' -- ')[0]
-    # PDFDrive copy suffixes like " ( PDFDrive.com )(1)"
+    # Remove curly-brace metadata: {Smith, Delia}(2014, Hodder){123}
+    base = re.sub(r'\{[^}]*\}', '', base)
+    # Remove source markers
+    base = re.sub(r'\s*-?\s*libgen\.li\s*$', '', base, flags=re.I)
+    base = re.sub(r'\s*-?\s*libgen\s*$', '', base, flags=re.I)
+    base = re.sub(r"\s*-?\s*anna['’]?s?\s*archive\s*$", '', base, flags=re.I)
     base = re.sub(r'\s*\(\s*PDFDrive\.com\s*\)\s*(?:\(\d+\))?\s*$', '', base, flags=re.I)
-    # Trailing underscores/hyphens used in slugified names
-    base = re.sub(r'[_\-]+$', '', base)
-    return base.strip(' -_')
+    # Remove trailing parenthetical year/publisher: (2008, Grub Street Cookery)
+    base = re.sub(r'\s*\(\s*\d{4}[^)]*\)\s*$', '', base)
+    # Normalise underscores used as separators: "Title_ Subtitle" -> "Title: Subtitle"
+    base = re.sub(r'\s*_\s*', ': ', base)
+    # Collapse whitespace and trim leftover separators
+    base = re.sub(r'\s+', ' ', base)
+    return base.strip(' -_:')
 
 
 def _source_added_at(raw_source: str, c: sqlite3.Cursor, recipes_dir: str) -> float:
