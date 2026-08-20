@@ -25,4 +25,5 @@ def test_static_files_served():
     assert 'text/css' in r1.headers.get('content-type', '')
     r2 = client.get('/static/app.js')
     assert r2.status_code == 200
-    assert 'application/javascript' in r2.headers.get('content-type', '')
+    content_type = r2.headers.get('content-type', '')
+    assert 'application/javascript' in content_type or 'text/javascript' in content_type
