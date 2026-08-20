@@ -2845,3 +2845,185 @@ textarea:focus-visible {
   padding-top: 12px;
 }
 
+
+/* Mobile-only polish -------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* Header */
+  header.top {
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .brand .logo-img {
+    width: 40px;
+    height: 40px;
+  }
+  .brand h1 {
+    font-size: 1.45rem;
+  }
+  .brand p {
+    display: none;
+  }
+  .header-actions {
+    gap: 6px;
+  }
+  .theme-toggle {
+    padding: 7px 12px;
+    font-size: 0.82rem;
+  }
+  /* Redundant with bottom nav on phones */
+  #install-btn,
+  .header-actions a[href="/collections"],
+  #lists-toggle {
+    display: none;
+  }
+
+  /* Hero */
+  .hero {
+    margin: 8px 0 20px;
+  }
+  .hero-title {
+    font-size: clamp(1.5rem, 7vw, 2rem);
+  }
+  .hero-subtitle {
+    font-size: 0.95rem;
+  }
+  .hero-pill {
+    padding: 5px 12px;
+    font-size: 0.7rem;
+  }
+
+  /* Search */
+  .search-box input {
+    padding: 16px 104px 16px 46px;
+    font-size: 1rem;
+  }
+  .search-box button {
+    padding: 0 16px;
+    font-size: 0.9rem;
+  }
+  .search-icon {
+    left: 16px;
+    font-size: 1.1rem;
+  }
+  .voice-search-btn {
+    right: 74px;
+  }
+
+  .search-options {
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .search-options .what-i-have-toggle,
+  .search-options .exclude-box,
+  .search-options .have-box {
+    flex: 1 1 100%;
+  }
+
+  .search-actions {
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .search-actions > * {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .search-actions .btn,
+  .search-actions .theme-toggle,
+  .search-actions select {
+    width: 100%;
+    justify-content: center;
+  }
+  .stats-badge {
+    justify-content: center;
+  }
+
+  /* Filter chips horizontal scroll */
+  .filter-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    gap: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .filter-chips::-webkit-scrollbar {
+    display: none;
+  }
+  .filter-chip {
+    flex: 0 0 auto;
+  }
+
+  /* Cards */
+  .card-media {
+    height: 160px;
+  }
+  .card-body {
+    padding: 14px;
+  }
+  .card-title-row h3 {
+    font-size: 1.05rem;
+  }
+
+  /* Container */
+  .container {
+    padding: 18px 14px 20px;
+  }
+
+  /* Recipe page */
+  .recipe-hero-media {
+    min-height: 220px;
+  }
+  .recipe-hero-media .no-image,
+  .recipe-hero-media .no-image .watermark-logo {
+    min-height: 220px;
+  }
+  .recipe-header {
+    padding: 20px;
+  }
+  .recipe-header h1 {
+    font-size: clamp(1.45rem, 6vw, 1.9rem);
+  }
+  .ingredients-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .ingredient-tools {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 12px;
+  }
+  .unit-toggle,
+  .scaler {
+    flex-wrap: wrap;
+  }
+  .recipe-actions-row {
+    gap: 10px;
+  }
+  .recipe-actions-row .btn,
+  .recipe-actions-row .want-btn,
+  .recipe-actions-row .fav-btn {
+    flex: 1 1 auto;
+  }
+
+  /* Meal plan */
+  .weekly-calendar {
+    grid-template-columns: 1fr;
+  }
+
+  /* Books */
+  .new-books-grid .book-card {
+    flex: 0 0 80vw;
+  }
+
+  /* Lists panel */
+  .lists-panel {
+    width: min(360px, 92vw);
+  }
+}
+
+@media (max-width: 480px) {
+  .search-actions .surprise-btn {
+    width: 100%;
+  }
+}
