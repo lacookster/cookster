@@ -111,13 +111,31 @@ def _set_user_token(response: Response, token: str) -> None:
     )
 
 
+def _sanitize_pair_code(code: str) -> str:
+    """Reduce a pairing code to safe alphanumerics (used in redirect URLs)."""
+    return re.sub(r'[^A-Za-z0-9]', '', code or '')[:16]
+
+
 def _ensure_user_data_schema(conn: sqlite3.Connection) -> None:
-    """Create the user_data table if it does not exist."""
+    """Create the user_data tables if they do not exist."""
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS user_data (
         token TEXT PRIMARY KEY,
         data TEXT NOT NULL,
         updated_at REAL NOT NULL
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS pairing_codes (
+        code TEXT PRIMARY KEY,
+        token TEXT NOT NULL,
+        expires_at REAL NOT NULL,
+        created_at REAL NOT NULL
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS devices (
+        token TEXT PRIMARY KEY,
+        device_name TEXT,
+        last_seen REAL NOT NULL,
+        user_agent TEXT,
+        revoked INTEGER NOT NULL DEFAULT 0
     )''')
     conn.commit()
 
@@ -136,16 +154,18 @@ def _load_user_data(token: str) -> dict:
     return {'data': {}, 'updated_at': 0}
 
 
-def _save_user_data(token: str, data: dict) -> None:
-    """Persist a JSON blob for a user token."""
+def _save_user_data(token: str, data: dict) -> float:
+    """Persist a JSON blob for a user token. Returns the stored timestamp."""
+    now = time.time()
     conn = _get_user_db()
     try:
         c = conn.cursor()
         c.execute('INSERT INTO user_data (token, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(token) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
-                  (token, json.dumps(data), time.time()))
+                  (token, json.dumps(data), now))
         conn.commit()
     finally:
         _release_user_db(conn)
+    return now
 
 
 def _delete_user_data(token: str) -> None:
@@ -157,6 +177,154 @@ def _delete_user_data(token: str) -> None:
         conn.commit()
     finally:
         _release_user_db(conn)
+
+
+def _merge_user_data(server_data: dict, client_data: dict, server_updated_at: float = 0) -> dict:
+    """Merge a client user-data payload into the stored server blob.
+
+    Collections are unioned (server items first, then new local items) so edits
+    made on two devices both survive. Keyed values (notes, ratings, ...) keep
+    the side with the later ``updatedAt``; on ties the server value wins.
+    """
+    if not isinstance(server_data, dict):
+        server_data = {}
+    if not isinstance(client_data, dict):
+        client_data = {}
+    now_ms = int(time.time() * 1000)
+    try:
+        client_ts = int(client_data.get('updatedAt') or 0)
+    except (TypeError, ValueError):
+        client_ts = 0
+    # The user_data.updated_at column is seconds; client updatedAt is ms.
+    server_ts = int((server_updated_at or 0) * 1000)
+    client_newer = client_ts > server_ts
+
+    def _union(server_list, client_list):
+        out = list(server_list)
+        seen = set(server_list)
+        for item in client_list:
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+        return out
+
+    def _merge_lists(server_lists, client_lists):
+        out = [dict(lst) for lst in server_lists]
+        by_id = {lst.get('id'): lst for lst in out}
+        for cl in client_lists:
+            sl = by_id.get(cl.get('id'))
+            if sl is None:
+                out.append(dict(cl))
+            else:
+                sl['recipes'] = _union(sl.get('recipes', []), cl.get('recipes', []))
+                if len(str(cl.get('name', ''))) > len(str(sl.get('name', ''))):
+                    sl['name'] = cl.get('name', '')
+        return out
+
+    def _union_by_id(server_items, client_items):
+        out = [dict(item) for item in server_items]
+        by_id = {item.get('id'): item for item in out}
+        for ci in client_items:
+            si = by_id.get(ci.get('id'))
+            if si is None:
+                out.append(dict(ci))
+            else:
+                # shopping.items: checked stays true if either side checked it.
+                if si.get('checked') is not None or ci.get('checked') is not None:
+                    si['checked'] = bool(si.get('checked')) or bool(ci.get('checked'))
+        return out
+
+    def _merge_keyed(server_map, client_map):
+        out = dict(server_map)
+        for k, v in client_map.items():
+            if k not in out or client_newer:
+                out[k] = v
+        return out
+
+    def _as_list(val):
+        return val if isinstance(val, list) else []
+
+    def _as_dict(val):
+        return val if isinstance(val, dict) else {}
+
+    merged = {}
+    for key in set(server_data) | set(client_data):
+        s = server_data.get(key)
+        c = client_data.get(key)
+        if key == 'updatedAt':
+            continue  # set at the end
+        elif key in ('favorites', 'wantToTry', 'pantry', 'tags', 'recentlyViewed'):
+            merged[key] = _union(_as_list(s), _as_list(c))
+        elif key == 'lists':
+            merged[key] = _merge_lists(_as_list(s), _as_list(c))
+        elif key == 'savedSearches':
+            merged[key] = _union_by_id(_as_list(s), _as_list(c))
+        elif key == 'shopping':
+            merged[key] = {'items': _union_by_id(_as_list(_as_dict(s).get('items')), _as_list(_as_dict(c).get('items')))}
+        elif key == 'mealPlan':
+            plan = {d: list(ids) for d, ids in _as_dict(s).items()}
+            for d, ids in _as_dict(c).items():
+                plan[d] = _union(plan.get(d, []), _as_list(ids))
+            merged[key] = plan
+        elif s is None:
+            merged[key] = c
+        elif c is None:
+            merged[key] = s
+        elif isinstance(s, dict) and isinstance(c, dict):
+            merged[key] = _merge_keyed(s, c)
+        else:
+            merged[key] = c if client_newer else s
+    merged['updatedAt'] = max(server_ts, client_ts, now_ms)
+    return merged
+
+
+def _device_name(user_agent: str) -> str:
+    """Derive a rough 'Browser on OS' label from a User-Agent string."""
+    ua = user_agent or ''
+    os_name = ''
+    for needle, label in (('iPhone', 'iPhone'), ('iPad', 'iPad'), ('Android', 'Android'),
+                          ('Windows', 'Windows'), ('Mac OS X', 'Mac'), ('Linux', 'Linux')):
+        if needle in ua:
+            os_name = label
+            break
+    browser = ''
+    for needle, label in (('Edg/', 'Edge'), ('Chrome/', 'Chrome'), ('Firefox/', 'Firefox'),
+                          ('Safari/', 'Safari')):
+        if needle in ua:
+            browser = label
+            break
+    if browser and os_name:
+        return f'{browser} on {os_name}'
+    return browser or os_name or 'Unknown device'
+
+
+def _track_device(token: str, request: Request) -> None:
+    """Record last_seen/user_agent for a token. Never clears a revocation."""
+    ua = request.headers.get('user-agent', '')
+    conn = _get_user_db()
+    try:
+        c = conn.cursor()
+        c.execute('''INSERT INTO devices (token, device_name, last_seen, user_agent, revoked)
+                     VALUES (?, ?, ?, ?, 0)
+                     ON CONFLICT(token) DO UPDATE SET
+                       device_name=excluded.device_name,
+                       last_seen=excluded.last_seen,
+                       user_agent=excluded.user_agent''',
+                  (token, _device_name(ua), time.time(), ua))
+        conn.commit()
+    finally:
+        _release_user_db(conn)
+
+
+def _is_token_revoked(token: str) -> bool:
+    """Return True if the token has been revoked via device management."""
+    try:
+        conn = _get_user_db()
+        row = conn.cursor().execute('SELECT revoked FROM devices WHERE token = ?', (token,)).fetchone()
+        _release_user_db(conn)
+        return bool(row and row['revoked'])
+    except Exception:
+        return False
 
 
 @app.middleware('http')
@@ -180,16 +348,17 @@ async def auth_middleware(request: Request, call_next):
 
 
 @app.get('/login', response_class=HTMLResponse)
-def login_page(request: Request, error: str = Query('')):
+def login_page(request: Request, error: str = Query(''), pair: str = Query('')):
     tmpl = templates.env.get_template('login.html')
-    content = tmpl.render(request=request, error=error)
+    content = tmpl.render(request=request, error=error, pair=_sanitize_pair_code(pair))
     return HTMLResponse(content)
 
 
 @app.post('/login')
-def login(request: Request, password: str = Form('')):
+def login(request: Request, password: str = Form(''), pair: str = Form('')):
     if _verify_password(password):
-        response = RedirectResponse(url='/', status_code=302)
+        pair = _sanitize_pair_code(pair)
+        response = RedirectResponse(url='/?pair=' + pair if pair else '/', status_code=302)
         _set_session(response)
         token = _get_or_create_user_token(request)
         _set_user_token(response, token)
@@ -210,7 +379,10 @@ def logout():
 def get_user_data(request: Request):
     """Return the current user's persisted data blob."""
     token = _get_or_create_user_token(request)
+    if _is_token_revoked(token):
+        return JSONResponse({'error': 'This device has been revoked'}, status_code=403)
     payload = _load_user_data(token)
+    _track_device(token, request)
     response = JSONResponse(payload)
     _set_user_token(response, token)
     return response
@@ -306,14 +478,19 @@ def _validate_user_data(data: dict) -> dict:
 
 @app.post('/api/user-data')
 def save_user_data(request: Request, payload: dict):
-    """Persist the current user's data blob."""
+    """Merge the current user's data blob into the stored one and return it."""
     token = _get_or_create_user_token(request)
+    if _is_token_revoked(token):
+        return JSONResponse({'error': 'This device has been revoked'}, status_code=403)
     try:
         data = _validate_user_data(payload.get('data', {}))
     except ValueError as e:
         return JSONResponse({'error': str(e)}, status_code=400)
-    _save_user_data(token, data)
-    response = JSONResponse({'ok': True})
+    existing = _load_user_data(token)
+    merged = _merge_user_data(existing['data'], data, existing['updated_at'])
+    updated_at = _save_user_data(token, merged)
+    _track_device(token, request)
+    response = JSONResponse({'ok': True, 'data': merged, 'updated_at': updated_at})
     _set_user_token(response, token)
     return response
 
@@ -360,6 +537,118 @@ def reset_user_data(request: Request):
     # Clear the user cookie so a fresh empty token is created next time.
     response.delete_cookie(_USER_COOKIE, path='/')
     return response
+
+
+# Short pairing codes for linking another device -------------------------------
+# Unambiguous alphabet: no 0/O, 1/I/L.
+_PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+_PAIR_CODE_LENGTH = 6
+_PAIR_CODE_TTL = 15 * 60  # 15 minutes
+
+
+def _generate_pairing_code() -> str:
+    return ''.join(secrets.choice(_PAIR_CODE_ALPHABET) for _ in range(_PAIR_CODE_LENGTH))
+
+
+@app.post('/api/pairing-code')
+def create_pairing_code(request: Request):
+    """Create a short, single-use code that links another device to this token."""
+    token = _get_or_create_user_token(request)
+    if _is_token_revoked(token):
+        return JSONResponse({'error': 'This device has been revoked'}, status_code=403)
+    now = time.time()
+    conn = _get_user_db()
+    try:
+        c = conn.cursor()
+        # One active code per token; drop expired ones while we are here.
+        c.execute('DELETE FROM pairing_codes WHERE token = ? OR expires_at < ?', (token, now))
+        code = _generate_pairing_code()
+        for _ in range(3):
+            try:
+                c.execute('INSERT INTO pairing_codes (code, token, expires_at, created_at) VALUES (?, ?, ?, ?)',
+                          (code, token, now + _PAIR_CODE_TTL, now))
+                break
+            except sqlite3.IntegrityError:
+                code = _generate_pairing_code()
+        conn.commit()
+    finally:
+        _release_user_db(conn)
+    response = JSONResponse({'code': code, 'expires_at': now + _PAIR_CODE_TTL})
+    _set_user_token(response, token)
+    return response
+
+
+@app.post('/api/pairing-code/claim')
+def claim_pairing_code(request: Request, payload: dict):
+    """Redeem a pairing code: adopt its token and return that token's data."""
+    code = str(payload.get('code', '')).strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail='code is required')
+    now = time.time()
+    conn = _get_user_db()
+    try:
+        c = conn.cursor()
+        row = c.execute('SELECT token, expires_at FROM pairing_codes WHERE code = ?', (code,)).fetchone()
+        if not row:
+            return JSONResponse({'error': 'Invalid pairing code'}, status_code=404)
+        # Codes are single-use: consume it whether or not it is still valid.
+        c.execute('DELETE FROM pairing_codes WHERE code = ?', (code,))
+        conn.commit()
+        if row['expires_at'] < now:
+            return JSONResponse({'error': 'Pairing code has expired'}, status_code=410)
+        token = row['token']
+    finally:
+        _release_user_db(conn)
+    if _is_token_revoked(token):
+        return JSONResponse({'error': 'This device has been revoked'}, status_code=403)
+    response = JSONResponse(_load_user_data(token))
+    _set_user_token(response, token)
+    return response
+
+
+# Device management ------------------------------------------------------------
+
+
+@app.get('/api/devices')
+def list_devices(request: Request):
+    """List all device tokens that have synced with this server."""
+    current = request.cookies.get(_USER_COOKIE)
+    conn = _get_user_db()
+    try:
+        rows = conn.cursor().execute(
+            'SELECT token, device_name, last_seen, user_agent, revoked FROM devices ORDER BY last_seen DESC').fetchall()
+    finally:
+        _release_user_db(conn)
+    devices = [{
+        'token': row['token'],
+        'name': row['device_name'] or 'Unknown device',
+        'last_seen': row['last_seen'],
+        'user_agent': row['user_agent'] or '',
+        'revoked': bool(row['revoked']),
+        'current': bool(current and current == row['token']),
+    } for row in rows]
+    return {'devices': devices}
+
+
+@app.post('/api/devices/revoke')
+def revoke_device(request: Request, payload: dict):
+    """Revoke a device token: delete its data and block it from syncing."""
+    token = str(payload.get('token', '')).strip()
+    if not token:
+        raise HTTPException(status_code=400, detail='token is required')
+    conn = _get_user_db()
+    try:
+        c = conn.cursor()
+        c.execute('DELETE FROM user_data WHERE token = ?', (token,))
+        c.execute('DELETE FROM pairing_codes WHERE token = ?', (token,))
+        c.execute('''INSERT INTO devices (token, device_name, last_seen, user_agent, revoked)
+                     VALUES (?, '', ?, '', 1)
+                     ON CONFLICT(token) DO UPDATE SET revoked = 1''',
+                  (token, time.time()))
+        conn.commit()
+    finally:
+        _release_user_db(conn)
+    return {'ok': True}
 
 
 # Directories that file paths must stay within.

@@ -209,6 +209,13 @@
     saveTimer = setTimeout(pushToServer, SERVER_DEBOUNCE_MS)
   }
 
+  function adoptServerData(serverData) {
+    // Store a server blob locally without bumping updatedAt or re-pushing.
+    _cached = null
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData))
+    notify()
+  }
+
   function pushToServer() {
     const data = load()
     // Avoid pushing more often than the debounce interval in very active sessions.
@@ -218,21 +225,40 @@
       return
     }
     lastServerPush = now
+    const sentUpdatedAt = data.updatedAt
     fetch('/api/user-data', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data })
     })
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('server error ' + r.status)))
-      .then(() => {
+      .then(r => {
+        if (!r.ok) {
+          const err = new Error('server error ' + r.status)
+          err.status = r.status
+          throw err
+        }
+        return r.json()
+      })
+      .then(resp => {
         pushRetryCount = 0
+        // The server merged our blob with its stored one. Adopt the merged
+        // result, unless the user made more local edits while we were pushing
+        // (those will be sent by the next scheduled push).
+        if (resp && resp.data && load().updatedAt === sentUpdatedAt) {
+          const merged = resp.data
+          if (typeof merged.updatedAt !== 'number' || merged.updatedAt < sentUpdatedAt) {
+            merged.updatedAt = sentUpdatedAt
+          }
+          adoptServerData(merged)
+        }
         window.dispatchEvent(new CustomEvent('cookster-sync-status', { detail: { status: 'saved', when: now } }))
       })
       .catch(err => {
         console.error('[cookster] failed to sync to server', err)
         window.dispatchEvent(new CustomEvent('cookster-sync-status', { detail: { status: 'error', when: now } }))
-        if (pushRetryCount < 3) {
+        // 403 means this device was revoked: retrying would never succeed.
+        if (err.status !== 403 && pushRetryCount < 3) {
           const delay = 1000 * Math.pow(2, pushRetryCount)
           pushRetryCount++
           setTimeout(pushToServer, delay)
@@ -270,7 +296,8 @@
   function resolveAndStore(serverPayload) {
     if (!serverPayload) return
     const serverData = serverPayload.data || {}
-    const serverTime = serverPayload.updated_at || serverData.updatedAt || 0
+    // data.updatedAt is in ms (client convention); the updated_at column is seconds.
+    const serverTime = serverData.updatedAt || (serverPayload.updated_at || 0) * 1000
     const localData = load()
     const localTime = localData.updatedAt || 0
 
@@ -302,8 +329,54 @@
     // Both empty: nothing to do.
   }
 
+  // If the URL carries a pairing code (?pair=CODE), claim it to adopt the
+  // paired device's token, then reload without the query parameter.
+  function handlePairParam() {
+    let params
+    try {
+      params = new URLSearchParams(window.location.search)
+    } catch (e) {
+      return false
+    }
+    const code = params.get('pair')
+    if (!code) return false
+    fetch('/api/pairing-code/claim', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    })
+      .then(r => {
+        if (!r.ok) {
+          const err = new Error('pairing failed ' + r.status)
+          err.status = r.status
+          throw err
+        }
+        return r.json()
+      })
+      .then(payload => {
+        if (payload && payload.data) {
+          const data = payload.data
+          if (typeof data.updatedAt !== 'number') data.updatedAt = Date.now()
+          _cached = null
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+        }
+      })
+      .catch(err => console.error('[cookster] pairing failed', err))
+      .finally(() => {
+        params.delete('pair')
+        const qs = params.toString()
+        const url = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash
+        window.location.replace(url)
+      })
+    return true
+  }
+
   // Sync once on load so server data is adopted and local changes are uploaded.
-  pullFromServer().then(resolveAndStore)
+  // (Skipped while a pairing claim is in flight; the reload re-triggers it.)
+  if (!handlePairParam()) {
+    pullFromServer().then(resolveAndStore)
+  }
 
   const api = {
     load,

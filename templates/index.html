@@ -254,6 +254,26 @@
 
             <div class="backup-row">
               <div class="backup-field">
+                <label for="pairing-code">Pair a new device</label>
+                <div class="backup-input-row">
+                  <input id="pairing-code" type="text" readonly class="backup-code-input" placeholder="No code yet" />
+                  <button id="generate-pairing-code" class="btn">Generate code</button>
+                  <button id="copy-pairing-link" class="btn secondary">Copy link</button>
+                </div>
+                <small>Open the link or scan the QR code on the other device within 15 minutes to share this device’s data.</small>
+                <div id="pairing-qr" class="pairing-qr" hidden></div>
+              </div>
+            </div>
+
+            <div class="backup-row">
+              <div class="backup-field">
+                <label>Devices</label>
+                <div id="devices-list" class="devices-list"></div>
+              </div>
+            </div>
+
+            <div class="backup-row">
+              <div class="backup-field">
                 <label>Sync status</label>
                 <div id="sync-status" class="sync-status">Waiting for first sync…</div>
               </div>
@@ -327,6 +347,7 @@
     <script src="/static/lists.js" defer></script>
     <script src="/static/ui.js" defer></script>
     <script src="/static/icons.js" defer></script>
+    <script src="/static/qr.js" defer></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>

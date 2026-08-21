@@ -128,10 +128,17 @@ Favourites, custom lists, shopping list, meal plan, notes, ratings, cooked histo
 Endpoints:
 
 - `GET /api/user-data` — fetch server blob.
-- `POST /api/user-data` — save server blob.
+- `POST /api/user-data` — **merge** the client blob into the server blob (field-level union/keyed merge in `_merge_user_data()`) and return the merged result so the client can adopt it. Deletions do not propagate (union semantics) — that is intentional.
 - `GET /api/user-data/export` — export recovery token + data.
-- `POST /api/user-data/import` — adopt another token/data.
+- `POST /api/user-data/import` — adopt another token/data (overwrite, no merge).
 - `POST /api/user-data/reset` — delete server-side data and clear the user cookie.
+
+Multi-device sync:
+
+- `POST /api/pairing-code` — create a 6-character, single-use pairing code (unambiguous alphabet, 15-minute TTL) mapped to the current token. One active code per token.
+- `POST /api/pairing-code/claim` — redeem a code: sets the `cookster_user` cookie to the paired token and returns its data. The client claims `?pair=CODE` URL params on load (the `/login` flow preserves `pair` through authentication); the Backup tab shows the code as a link/QR (`static/qr.js`, a dependency-free QR-to-SVG generator).
+- `GET /api/devices` — list synced device tokens (name derived from User-Agent, `last_seen`, `current` flag). Tokens are tracked on every `/api/user-data` call in the `devices` table.
+- `POST /api/devices/revoke` — delete a token's `user_data` row and mark it `revoked` in `devices`. Revoked tokens get 403 from `/api/user-data` and their data is not recreated.
 
 ### Image handling
 

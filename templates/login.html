@@ -82,6 +82,9 @@
 
         <form class="login-form" method="post" action="/login">
           <input type="password" name="password" placeholder="Enter password" autofocus required>
+          {% if pair %}
+            <input type="hidden" name="pair" value="{{ pair }}">
+          {% endif %}
           <button type="submit" class="btn">Unlock</button>
           {% if error %}
             <div class="login-error">Incorrect password. Please try again.</div>

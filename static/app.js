@@ -41,6 +41,11 @@
   const importRecoveryBtn = document.getElementById('import-recovery-btn')
   const syncStatusEl = document.getElementById('sync-status')
   const resetServerDataBtn = document.getElementById('reset-server-data')
+  const pairingCodeInput = document.getElementById('pairing-code')
+  const generatePairingCodeBtn = document.getElementById('generate-pairing-code')
+  const copyPairingLinkBtn = document.getElementById('copy-pairing-link')
+  const pairingQrEl = document.getElementById('pairing-qr')
+  const devicesListEl = document.getElementById('devices-list')
   const pantryInput = document.getElementById('pantry-input')
   const addPantryBtn = document.getElementById('add-pantry')
   const pantryListEl = document.getElementById('pantry-list')
@@ -1467,6 +1472,114 @@
         })
     })
   }
+
+  // Pairing codes + device management ---------------------------------------
+  let currentPairingLink = ''
+
+  function pairingLink(code) {
+    return location.origin + '/login?pair=' + encodeURIComponent(code)
+  }
+
+  if (generatePairingCodeBtn) {
+    generatePairingCodeBtn.addEventListener('click', () => {
+      fetch('/api/pairing-code', { method: 'POST', credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(payload => {
+          const code = payload.code || ''
+          currentPairingLink = pairingLink(code)
+          if (pairingCodeInput) pairingCodeInput.value = code
+          if (pairingQrEl) {
+            if (window.CooksterQR) {
+              try {
+                pairingQrEl.innerHTML = window.CooksterQR.toSvg(currentPairingLink, 180)
+                pairingQrEl.hidden = false
+              } catch (e) {
+                pairingQrEl.hidden = true
+              }
+            }
+          }
+          backupStatus.textContent = 'Pairing code created. It expires in 15 minutes.'
+          backupStatus.className = 'backup-status success'
+        })
+        .catch(() => {
+          backupStatus.textContent = 'Could not create a pairing code.'
+          backupStatus.className = 'backup-status error'
+        })
+    })
+  }
+
+  if (copyPairingLinkBtn) {
+    copyPairingLinkBtn.addEventListener('click', () => {
+      const link = currentPairingLink || (pairingCodeInput && pairingCodeInput.value ? pairingLink(pairingCodeInput.value) : '')
+      if (!link) {
+        backupStatus.textContent = 'Generate a pairing code first.'
+        backupStatus.className = 'backup-status error'
+        return
+      }
+      navigator.clipboard.writeText(link).catch(() => {})
+      backupStatus.textContent = 'Pairing link copied.'
+      backupStatus.className = 'backup-status success'
+    })
+  }
+
+  function renderDevices(devices) {
+    if (!devicesListEl) return
+    devicesListEl.innerHTML = ''
+    const visible = devices.filter(d => !d.revoked)
+    if (!visible.length) {
+      devicesListEl.innerHTML = '<p class="empty-lists">No devices have synced yet.</p>'
+      return
+    }
+    visible.forEach(d => {
+      const row = document.createElement('div')
+      row.className = 'device-row'
+      const info = document.createElement('div')
+      info.className = 'device-info'
+      const name = document.createElement('div')
+      name.className = 'device-name'
+      name.textContent = d.name + (d.current ? ' (this device)' : '')
+      const seen = document.createElement('div')
+      seen.className = 'device-seen'
+      seen.textContent = d.last_seen ? 'Last seen ' + new Date(d.last_seen * 1000).toLocaleString() : ''
+      info.appendChild(name)
+      info.appendChild(seen)
+      row.appendChild(info)
+      if (!d.current) {
+        const revokeBtn = document.createElement('button')
+        revokeBtn.className = 'btn secondary device-revoke'
+        revokeBtn.textContent = 'Revoke'
+        revokeBtn.addEventListener('click', () => {
+          if (!confirm('Revoke this device? Its server-side data will be deleted and it will stop syncing.')) return
+          fetch('/api/devices/revoke', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: d.token })
+          })
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(() => loadDevices())
+            .catch(() => {
+              backupStatus.textContent = 'Revoke failed.'
+              backupStatus.className = 'backup-status error'
+            })
+        })
+        row.appendChild(revokeBtn)
+      }
+      devicesListEl.appendChild(row)
+    })
+  }
+
+  function loadDevices() {
+    if (!devicesListEl) return
+    fetch('/api/devices', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(payload => renderDevices(payload.devices || []))
+      .catch(() => {
+        devicesListEl.innerHTML = '<p class="empty-lists">Unable to load devices.</p>'
+      })
+  }
+
+  loadDevices()
 
   if (resetServerDataBtn) {
     resetServerDataBtn.addEventListener('click', () => {
